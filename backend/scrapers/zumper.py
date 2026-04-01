@@ -89,7 +89,7 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
                     price_min=int(price_min),
                     price_max=int(price_max),
                     bedrooms=beds_min,
-                    bathrooms=item.get("min_bathrooms", 1.0),
+                    bathrooms=float(item.get("min_bathrooms") or 1.0),
                     furnished=False,
                     available_from=date_available,
                     available_to=None,
@@ -108,5 +108,5 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
             if offset >= total or offset >= 500:
                 break
 
-    log.info("%d listings (from %d total available)", len(listings), data.get("matching", 0) if 'data' in dir() else 0)
+    log.info("%d listings", len(listings))
     return listings

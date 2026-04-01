@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
 import FiltersBar from "@/components/FiltersBar";
 import ListingCard from "@/components/ListingCard";
@@ -106,11 +106,11 @@ export default function Home() {
     if (polygon) doSearch(polygon, filters);
   }, [polygon, filters, doSearch]);
 
-  const sorted = sortListings(listings, sort);
-  const sourceCounts = listings.reduce<Record<string, number>>((acc, l) => {
+  const sorted = useMemo(() => sortListings(listings, sort), [listings, sort]);
+  const sourceCounts = useMemo(() => listings.reduce<Record<string, number>>((acc, l) => {
     acc[l.source] = (acc[l.source] || 0) + 1;
     return acc;
-  }, {});
+  }, {}), [listings]);
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-surface-0">

@@ -69,8 +69,14 @@ async def scrape(check_in: str | None, check_out: str | None, min_price: int, ma
             neighborhood_el = card.select_one(".hidden-neighborhood")
             baths_el = card.select_one(".hidden-bathrooms")
 
-            lat = float(lat_el.get_text(strip=True)) if lat_el and lat_el.get_text(strip=True) else None
-            lng = float(lng_el.get_text(strip=True)) if lng_el and lng_el.get_text(strip=True) else None
+            try:
+                lat = float(lat_el.get_text(strip=True)) if lat_el and lat_el.get_text(strip=True) else None
+            except (ValueError, TypeError):
+                lat = None
+            try:
+                lng = float(lng_el.get_text(strip=True)) if lng_el and lng_el.get_text(strip=True) else None
+            except (ValueError, TypeError):
+                lng = None
             city = city_el.get_text(strip=True) if city_el else "Manhattan"
             neighborhood = neighborhood_el.get_text(strip=True) if neighborhood_el else "New York"
             baths = float(baths_el.get_text(strip=True)) if baths_el and baths_el.get_text(strip=True) else 1.0

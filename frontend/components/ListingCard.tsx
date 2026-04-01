@@ -36,7 +36,7 @@ export default function ListingCard({ listing, selected, onClick, onOpenDetail }
             alt=""
             className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
             loading="lazy"
-            onError={(e) => { (e.target as HTMLImageElement).parentElement!.style.display = "none"; }}
+            onError={(e) => { const parent = (e.target as HTMLImageElement).parentElement; if (parent) parent.style.display = "none"; }}
           />
           <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
 

@@ -245,12 +245,14 @@ async def search(
 
 @app.get("/api/listing/detail")
 async def listing_detail(url: str = Query(..., description="Original listing URL")) -> dict[str, Any]:
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Invalid URL — must start with http:// or https://")
     from scrapers import detail_scraper
     try:
         return await detail_scraper.scrape_detail(url)
     except Exception as e:
         log.error("Detail scrape failed for %s: %s", url, e)
-        raise HTTPException(status_code=502, detail=f"Failed to scrape listing detail: {e}")
+        raise HTTPException(status_code=502, detail="Failed to scrape listing detail")
 
 
 @app.get("/api/health")

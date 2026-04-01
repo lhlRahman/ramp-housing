@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Listing, ListingDetail as DetailType, SOURCE_COLORS, SOURCE_LABELS } from "@/lib/types";
 import { fetchListingDetail } from "@/lib/api";
 
@@ -22,16 +22,19 @@ export default function ListingDetail({ listing, onClose }: Props) {
       .finally(() => setLoading(false));
   }, [listing.url]);
 
-  const allPhotos = (() => {
+  const allPhotos = useMemo(() => {
     const seen = new Set<string>();
     const out: string[] = [];
     for (const p of [...(listing.photos || []), listing.photo_url || "", ...(detail?.photos || [])]) {
       if (p && !seen.has(p)) { seen.add(p); out.push(p); }
     }
     return out;
-  })();
+  }, [listing.photos, listing.photo_url, detail?.photos]);
 
-  const allAmenities = [...new Set([...(listing.amenities || []), ...(detail?.amenities || [])])];
+  const allAmenities = useMemo(
+    () => [...new Set([...(listing.amenities || []), ...(detail?.amenities || [])])],
+    [listing.amenities, detail?.amenities],
+  );
   const color = SOURCE_COLORS[listing.source] || "#6b7280";
   const priceStr =
     listing.price_min === listing.price_max
@@ -104,7 +107,7 @@ export default function ListingDetail({ listing, onClose }: Props) {
                   <div className="flex gap-1.5 p-3 overflow-x-auto bg-surface-0/50">
                     {allPhotos.slice(0, 12).map((url, i) => (
                       <button
-                        key={i}
+                        key={url}
                         onClick={() => setPhotoIdx(i)}
                         className={`shrink-0 w-14 h-14 rounded-lg overflow-hidden transition-all ${
                           i === photoIdx

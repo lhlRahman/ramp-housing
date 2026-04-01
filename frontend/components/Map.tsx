@@ -123,11 +123,13 @@ export default function Map({ listings, selectedId, center, zoom, onPolygonChang
     markersRef.current.forEach((marker) => map.removeLayer(marker));
     markersRef.current.clear();
 
-    listings.forEach(async (listing) => {
-      if (listing.lat == null || listing.lng == null) return;
-
+    (async () => {
       const L = (await import("leaflet")).default;
-      const color = SOURCE_COLORS[listing.source] || "#6b7280";
+      for (const listing of listings) {
+        if (listing.lat == null || listing.lng == null) continue;
+        if (!mapRef.current) break;
+
+        const color = SOURCE_COLORS[listing.source] || "#6b7280";
 
       const priceK = listing.price_min >= 10000
         ? `$${Math.round(listing.price_min / 1000)}k`
@@ -153,9 +155,10 @@ export default function Map({ listings, selectedId, center, zoom, onPolygonChang
           `</div>`
         );
 
-      marker.on("click", () => onSelectListing(listing.id));
-      markersRef.current.set(listing.id, marker);
-    });
+        marker.on("click", () => onSelectListing(listing.id));
+        markersRef.current.set(listing.id, marker);
+      }
+    })();
   }, [listings, onSelectListing]);
 
   // Highlight selected

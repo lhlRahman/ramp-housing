@@ -42,6 +42,9 @@ async def geocode(address: str) -> tuple[float, float] | None:
                 params={"q": address, "limit": 1},
                 headers={"User-Agent": NOMINATIM_USER_AGENT},
             )
+            if resp.status_code != 200:
+                log.debug("Photon returned %d for '%s'", resp.status_code, address)
+                return None
             data = resp.json()
             features = data.get("features", [])
             if features:
@@ -69,6 +72,9 @@ async def reverse_geocode(lat: float, lng: float) -> dict | None:
                 params={"lat": lat, "lon": lng},
                 headers={"User-Agent": NOMINATIM_USER_AGENT},
             )
+            if resp.status_code != 200:
+                log.warning("Photon reverse returned %d", resp.status_code)
+                return None
             data = resp.json()
             features = data.get("features", [])
 

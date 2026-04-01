@@ -65,7 +65,8 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
 
     listings: list[Listing] = []
     url = _build_url(city_slug, min_price, max_price, bedrooms, no_fee)
-    max_pages = 50  # scrape until no more results (cached after first run)
+    max_pages = 50
+    pages_scraped = 0
 
     br = await shared_browser._ensure_browser()
 
@@ -135,6 +136,7 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
                     ))
 
                 log.debug("Page %d: %d cards, %d total", pg, len(raw_listings), len(listings))
+                pages_scraped = pg
 
             except Exception as e:
                 log.warning("Page %d error: %s", pg, e)
@@ -144,5 +146,5 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
     except Exception as e:
         log.error("Scrape error: %s", e)
 
-    log.info("%d listings (scraped %d pages)", len(listings), min(pg if 'pg' in dir() else 1, max_pages))
+    log.info("%d listings (scraped %d pages)", len(listings), pages_scraped)
     return listings
