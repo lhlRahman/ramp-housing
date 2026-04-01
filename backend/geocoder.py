@@ -57,7 +57,9 @@ async def geocode(address: str) -> tuple[float, float] | None:
 
 
 async def reverse_geocode(lat: float, lng: float) -> dict | None:
-    """Reverse-geocode (lat, lng) to {city, state, country_code, display_name}."""
+    """Reverse-geocode (lat, lng) to {city, state, country_code, display_name}.
+    Searches through multiple Photon results to find one with a city field,
+    since the nearest result may be a POI (restaurant, shop) without city data."""
     await _throttle()
 
     try:
@@ -69,10 +71,25 @@ async def reverse_geocode(lat: float, lng: float) -> dict | None:
             )
             data = resp.json()
             features = data.get("features", [])
+
+            # Search through results for one with a city field
+            for feature in features:
+                props = feature.get("properties", {})
+                city = props.get("city") or props.get("town") or props.get("municipality") or props.get("village")
+                if city:
+                    return {
+                        "city": city,
+                        "state": props.get("state"),
+                        "country": props.get("country"),
+                        "country_code": (props.get("countrycode") or "").lower(),
+                        "display_name": props.get("name", ""),
+                    }
+
+            # Fallback: use first result even without city (state/country may still work)
             if features:
                 props = features[0].get("properties", {})
                 return {
-                    "city": props.get("city") or props.get("town") or props.get("municipality") or props.get("village"),
+                    "city": props.get("district") or props.get("county") or props.get("name"),
                     "state": props.get("state"),
                     "country": props.get("country"),
                     "country_code": (props.get("countrycode") or "").lower(),
