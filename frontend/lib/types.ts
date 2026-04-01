@@ -71,6 +71,8 @@ export const SOURCE_LABELS: Record<string, string> = {
   furnished_finder: "Furnished Finder",
   leasebreak: "Leasebreak",
   renthop: "RentHop",
+  zumper: "Zumper",
+  craigslist: "Craigslist",
 };
 
 export const SOURCE_COLORS: Record<string, string> = {
@@ -80,4 +82,6 @@ export const SOURCE_COLORS: Record<string, string> = {
   furnished_finder: "#ef4444",
   leasebreak: "#8b5cf6",
   renthop: "#3b82f6",
+  zumper: "#14b8a6",
+  craigslist: "#a855f7",
 };

@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
 
-Source = Literal["june_homes", "alohause", "blueground", "furnished_finder", "leasebreak", "renthop"]
+Source = Literal["june_homes", "alohause", "blueground", "furnished_finder", "leasebreak", "renthop", "zumper", "craigslist"]
 ListingType = Literal["room", "apartment", "house"]
 ALL_SOURCES: list[str] = list(Source.__args__)  # type: ignore[attr-defined]
 

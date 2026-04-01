@@ -122,6 +122,17 @@ def resolve_location(location: dict) -> dict | None:
     if bg_key in BLUEGROUND_SLUGS:
         slugs["blueground"] = BLUEGROUND_SLUGS[bg_key]
 
+    # Zumper: same pattern as renthop — {city}-{state}
+    if city_lower == "washington" and state_abbr == "dc":
+        slugs["zumper"] = "washington-dc"
+    else:
+        slugs["zumper"] = f"{city_slug}-{state_abbr}"
+
+    # Craigslist: uses city-specific subdomains, pass city+state for lookup
+    from scrapers.craigslist import get_subdomain
+    if get_subdomain(city_lower, state_abbr):
+        slugs["craigslist"] = {"city": city_lower, "state": state_abbr}
+
     # NYC-only scrapers
     if is_nyc:
         slugs["alohause"] = True

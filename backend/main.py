@@ -17,7 +17,7 @@ from cities import resolve_location
 from models import Listing
 from utils import deduplicate, point_in_polygon, polygon_centroid
 from scrapers import blueground as bg_scraper
-from scrapers import june_homes, alohause, furnished_finder, leasebreak, renthop
+from scrapers import june_homes, alohause, furnished_finder, leasebreak, renthop, zumper, craigslist
 
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL, logging.INFO),
@@ -98,6 +98,15 @@ def _build_scraper_tasks(
     if "renthop" in source_list and "renthop" in city_slugs:
         slug = city_slugs["renthop"] if isinstance(city_slugs["renthop"], str) else None
         tasks.append(("renthop", renthop.scrape(slug, min_price, max_price, bed_list, no_fee)))
+
+    if "zumper" in source_list and "zumper" in city_slugs:
+        slug = city_slugs["zumper"] if isinstance(city_slugs["zumper"], str) else None
+        tasks.append(("zumper", zumper.scrape(slug, min_price, max_price, bed_list)))
+
+    if "craigslist" in source_list and "craigslist" in city_slugs:
+        cl_data = city_slugs["craigslist"]
+        if isinstance(cl_data, dict):
+            tasks.append(("craigslist", craigslist.scrape(cl_data["city"], cl_data["state"], min_price, max_price, bed_list)))
 
     return tasks
 
