@@ -61,46 +61,29 @@ async def geocode(address: str) -> tuple[float, float] | None:
 
 async def reverse_geocode(lat: float, lng: float) -> dict | None:
     """Reverse-geocode (lat, lng) to {city, state, country_code, display_name}.
-    Searches through multiple Photon results to find one with a city field,
-    since the nearest result may be a POI (restaurant, shop) without city data."""
+    Uses Nominatim with zoom=10 (city level) to reliably get city names
+    instead of nearby POIs like restaurants."""
     await _throttle()
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
-                PHOTON_REVERSE,
-                params={"lat": lat, "lon": lng},
+                "https://nominatim.openstreetmap.org/reverse",
+                params={"lat": lat, "lon": lng, "format": "json", "zoom": 10},
                 headers={"User-Agent": NOMINATIM_USER_AGENT},
             )
             if resp.status_code != 200:
-                log.warning("Photon reverse returned %d", resp.status_code)
+                log.warning("Nominatim reverse returned %d", resp.status_code)
                 return None
             data = resp.json()
-            features = data.get("features", [])
-
-            # Search through results for one with a city field
-            for feature in features:
-                props = feature.get("properties", {})
-                city = props.get("city") or props.get("town") or props.get("municipality") or props.get("village")
-                if city:
-                    return {
-                        "city": city,
-                        "state": props.get("state"),
-                        "country": props.get("country"),
-                        "country_code": (props.get("countrycode") or "").lower(),
-                        "display_name": props.get("name", ""),
-                    }
-
-            # Fallback: use first result even without city (state/country may still work)
-            if features:
-                props = features[0].get("properties", {})
-                return {
-                    "city": props.get("district") or props.get("county") or props.get("name"),
-                    "state": props.get("state"),
-                    "country": props.get("country"),
-                    "country_code": (props.get("countrycode") or "").lower(),
-                    "display_name": props.get("name", ""),
-                }
+            addr = data.get("address", {})
+            return {
+                "city": addr.get("city") or addr.get("town") or addr.get("municipality") or addr.get("village") or addr.get("county"),
+                "state": addr.get("state"),
+                "country": addr.get("country"),
+                "country_code": (addr.get("country_code") or "").lower(),
+                "display_name": data.get("display_name", ""),
+            }
     except Exception as e:
         log.warning("Reverse geocode failed for (%s, %s): %s", lat, lng, e)
 
