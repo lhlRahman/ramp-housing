@@ -20,7 +20,7 @@ async def scrape(city_slug: str | None, check_in: str | None, min_price: int, ma
     empty_pages = 0
 
     async with httpx.AsyncClient(timeout=15) as client:
-        while page <= 35 and empty_pages < 5:
+        while page <= 100 and empty_pages < 5:  # scrape all pages, stop after 5 consecutive dupes
             params: dict = {
                 "city": city_slug,
                 "page": page,

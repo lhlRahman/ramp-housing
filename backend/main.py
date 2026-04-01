@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -10,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import browser
 import config
 import db
+from db import get_cached_scrape, cache_scrape
 import geocoder
 from cities import resolve_location
 from models import Listing
@@ -165,18 +167,42 @@ async def search(
             "detected_location": resolved["name"],
         }
 
-    named_tasks = _build_scraper_tasks(
-        city_slugs, check_in, check_out, min_price, max_price, bed_list, source_list, furnished, no_fee,
-    )
-    results = await asyncio.gather(*[t[1] for t in named_tasks], return_exceptions=True)
+    # Build a hash of the search params for cache key
+    params_hash = hashlib.md5(json.dumps({
+        "ci": check_in, "co": check_out, "min": min_price, "max": max_price,
+        "beds": sorted(bed_list), "furn": furnished, "nofee": no_fee,
+    }, sort_keys=True).encode()).hexdigest()[:12]
 
+    city_key = f"{resolved['city']}:{resolved['state']}"
+
+    # Check cache first, only scrape sources that aren't cached
     all_listings: list[Listing] = []
-    for (src_name, _), result in zip(named_tasks, results):
-        if isinstance(result, Exception):
-            log.error("Scraper %s failed: %s", src_name, result)
-            continue
-        log.info("Scraper %s returned %d listings", src_name, len(result))
-        all_listings.extend(result)
+    uncached_sources: list[str] = []
+
+    for src in source_list:
+        cached = get_cached_scrape(src, city_key, params_hash)
+        if cached is not None:
+            all_listings.extend([Listing(**l) for l in cached])
+        else:
+            uncached_sources.append(src)
+
+    # Scrape only uncached sources
+    if uncached_sources:
+        named_tasks = _build_scraper_tasks(
+            city_slugs, check_in, check_out, min_price, max_price, bed_list, uncached_sources, furnished, no_fee,
+        )
+        results = await asyncio.gather(*[t[1] for t in named_tasks], return_exceptions=True)
+
+        for (src_name, _), result in zip(named_tasks, results):
+            if isinstance(result, Exception):
+                log.error("Scraper %s failed: %s", src_name, result)
+                continue
+            log.info("Scraper %s returned %d listings", src_name, len(result))
+            # Cache the results
+            cache_scrape(src_name, city_key, params_hash, [l.model_dump() for l in result])
+            all_listings.extend(result)
+    else:
+        log.info("All %d sources served from cache", len(source_list))
 
     if furnished:
         all_listings = [l for l in all_listings if l.furnished]

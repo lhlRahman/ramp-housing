@@ -65,7 +65,7 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
 
     listings: list[Listing] = []
     url = _build_url(city_slug, min_price, max_price, bedrooms, no_fee)
-    max_pages = 15
+    max_pages = 50  # scrape until no more results (cached after first run)
 
     br = await shared_browser._ensure_browser()
 
