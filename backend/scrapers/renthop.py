@@ -65,8 +65,9 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
 
     listings: list[Listing] = []
     url = _build_url(city_slug, min_price, max_price, bedrooms, no_fee)
-    max_pages = 50
+    max_pages = 8
     pages_scraped = 0
+    consecutive_timeouts = 0
 
     br = await shared_browser._ensure_browser()
 
@@ -81,8 +82,8 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
             page = await ctx.new_page()
 
             try:
-                await page.goto(page_url, wait_until="domcontentloaded", timeout=20000)
-                await page.wait_for_timeout(3000)
+                await page.goto(page_url, wait_until="domcontentloaded", timeout=10000)
+                await page.wait_for_timeout(1500)
 
                 raw_listings = await page.evaluate("""
                     () => {
@@ -137,9 +138,14 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
 
                 log.debug("Page %d: %d cards, %d total", pg, len(raw_listings), len(listings))
                 pages_scraped = pg
+                consecutive_timeouts = 0
 
             except Exception as e:
                 log.warning("Page %d error: %s", pg, e)
+                consecutive_timeouts += 1
+                if consecutive_timeouts >= 2:
+                    log.warning("2 consecutive timeouts, stopping early")
+                    break
             finally:
                 await ctx.close()
 

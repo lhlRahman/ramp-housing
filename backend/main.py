@@ -56,7 +56,9 @@ async def geocode_listings(listings: list[Listing], geocode_suffix: str) -> list
     for listing in listings:
         if listing.lat is None or listing.lng is None:
             addr = listing.address
-            if addr and geocode_suffix and geocode_suffix.lower() not in addr.lower():
+            if not addr:
+                continue  # Skip empty addresses — they always fail and can't be cached
+            if geocode_suffix and geocode_suffix.lower() not in addr.lower():
                 addr = addr + geocode_suffix
             coords = await geocoder.geocode(addr)
             if coords:
@@ -217,6 +219,14 @@ async def search(
         all_listings = [l for l in all_listings if l.furnished]
 
     all_listings = await geocode_listings(all_listings, geocode_suffix)
+
+    # Write coords back into scrape cache so future searches skip geocoding entirely
+    listings_by_source: dict[str, list[Listing]] = {}
+    for l in all_listings:
+        listings_by_source.setdefault(l.source, []).append(l)
+    for src, src_listings in listings_by_source.items():
+        if src in source_list:
+            cache_scrape(src, city_key, params_hash, [l.model_dump() for l in src_listings])
 
     with_coords = [l for l in all_listings if l.lat is not None and l.lng is not None]
     without_coords = len(all_listings) - len(with_coords)

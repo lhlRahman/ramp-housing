@@ -50,8 +50,8 @@ export default function Home() {
   const [noSourcesMessage, setNoSourcesMessage] = useState<string | null>(null);
 
   // Map defaults — center of US, or browser geolocation
-  const [mapCenter, setMapCenter] = useState<[number, number]>([39.83, -98.58]);
-  const [mapZoom, setMapZoom] = useState(4);
+  const [mapCenter, setMapCenter] = useState<[number, number]>([40.7128, -74.006]);
+  const [mapZoom, setMapZoom] = useState(12);
 
   useEffect(() => {
     navigator.geolocation?.getCurrentPosition(
@@ -132,6 +132,7 @@ export default function Home() {
             selectedId={selectedId}
             center={mapCenter}
             zoom={mapZoom}
+            loading={loading}
             onPolygonChange={handlePolygonChange}
             onSelectListing={(id) => setSelectedId(prev => prev === id ? null : id)}
             onDrawStart={() => setShowEmptyState(false)}

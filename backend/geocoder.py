@@ -28,10 +28,12 @@ async def _throttle():
 
 
 async def geocode(address: str) -> tuple[float, float] | None:
-    """Forward-geocode an address to (lat, lng). Cached in SQLite."""
+    """Forward-geocode an address to (lat, lng). Cached in SQLite.
+    Failures are also cached so they are never retried."""
     cached = get_cached_coords(address)
-    if cached:
-        return cached
+    if cached is not None:
+        lat, lng = cached
+        return (lat, lng) if lat is not None else None  # None,None = cached failure
 
     await _throttle()
 
@@ -44,6 +46,7 @@ async def geocode(address: str) -> tuple[float, float] | None:
             )
             if resp.status_code != 200:
                 log.debug("Photon returned %d for '%s'", resp.status_code, address)
+                cache_coords(address, None, None)  # Cache failure — don't retry
                 return None
             data = resp.json()
             features = data.get("features", [])
@@ -53,8 +56,10 @@ async def geocode(address: str) -> tuple[float, float] | None:
                 cache_coords(address, lat, lng)
                 return lat, lng
             log.debug("No geocode result for '%s'", address)
+            cache_coords(address, None, None)  # Cache failure — don't retry
     except Exception as e:
         log.warning("Geocode failed for '%s': %s", address, e)
+        # Don't cache network/timeout errors — they may be transient
 
     return None
 

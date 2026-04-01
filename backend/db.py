@@ -51,7 +51,7 @@ def get_cached_coords(address: str) -> tuple[float, float] | None:
         conn.close()
 
 
-def cache_coords(address: str, lat: float, lng: float):
+def cache_coords(address: str, lat: float | None, lng: float | None):
     conn = get_conn()
     try:
         conn.execute(

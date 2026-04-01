@@ -10,23 +10,28 @@ interface Props {
   selectedId: string | null;
   center: [number, number];
   zoom: number;
+  loading?: boolean;
   onPolygonChange: (polygon: [number, number][] | null) => void;
   onSelectListing: (id: string) => void;
   onDrawStart?: () => void;
 }
 
-export default function Map({ listings, selectedId, center, zoom, onPolygonChange, onSelectListing, onDrawStart }: Props) {
+export default function Map({ listings, selectedId, center, zoom, loading, onPolygonChange, onSelectListing, onDrawStart }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const markersRef = useRef<globalThis.Map<string, Marker>>(new globalThis.Map());
   const polygonLayerRef = useRef<any>(null);
+  const onPolygonChangeRef = useRef(onPolygonChange);
   const [hasPolygon, setHasPolygon] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
 
+  // Keep ref current so initMap never needs onPolygonChange as a dependency
+  useEffect(() => { onPolygonChangeRef.current = onPolygonChange; }, [onPolygonChange]);
+
   const drawPathOptions = {
-    color: "#EBF123",
+    color: "#60a5fa",
     weight: 2,
-    fillColor: "#EBF123",
+    fillColor: "#60a5fa",
     fillOpacity: 0.08,
   };
 
@@ -78,13 +83,13 @@ export default function Map({ listings, selectedId, center, zoom, onPolygonChang
 
       const latlngs = e.layer.getLatLngs()[0] as { lat: number; lng: number }[];
       const coords: [number, number][] = latlngs.map((ll) => [ll.lat, ll.lng]);
-      onPolygonChange(coords);
+      onPolygonChangeRef.current(coords);
       setHasPolygon(true);
     });
 
     map.on("pm:remove", () => {
       polygonLayerRef.current = null;
-      onPolygonChange(null);
+      onPolygonChangeRef.current(null);
       setHasPolygon(false);
     });
 
@@ -93,10 +98,10 @@ export default function Map({ listings, selectedId, center, zoom, onPolygonChang
       if (!layer) return;
       const latlngs = layer.getLatLngs()[0] as { lat: number; lng: number }[];
       const coords: [number, number][] = latlngs.map((ll) => [ll.lat, ll.lng]);
-      onPolygonChange(coords);
+      onPolygonChangeRef.current(coords);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onPolygonChange]);
+  }, []);
 
   useEffect(() => {
     initMap();
@@ -107,6 +112,19 @@ export default function Map({ listings, selectedId, center, zoom, onPolygonChang
       }
     };
   }, [initMap]);
+
+  // Update polygon highlight based on results / loading state
+  useEffect(() => {
+    const layer = polygonLayerRef.current;
+    if (!layer) return;
+    if (loading) {
+      layer.setStyle({ color: "#60a5fa", weight: 2, fillColor: "#60a5fa", fillOpacity: 0.08 });
+    } else if (listings.length > 0) {
+      layer.setStyle({ color: "#60a5fa", weight: 2.5, fillColor: "#60a5fa", fillOpacity: 0.18 });
+    } else {
+      layer.setStyle({ color: "#60a5fa", weight: 1.5, fillColor: "#60a5fa", fillOpacity: 0.04 });
+    }
+  }, [listings.length, loading]);
 
   // Pan map when center changes (e.g. geolocation detected)
   useEffect(() => {
@@ -130,16 +148,18 @@ export default function Map({ listings, selectedId, center, zoom, onPolygonChang
         if (!mapRef.current) break;
 
         const color = SOURCE_COLORS[listing.source] || "#6b7280";
-
-      const priceK = listing.price_min >= 10000
-        ? `$${Math.round(listing.price_min / 1000)}k`
-        : `$${(listing.price_min / 1000).toFixed(1)}k`;
+        const priceK = listing.price_min >= 10000
+          ? `$${Math.round(listing.price_min / 1000)}k`
+          : `$${(listing.price_min / 1000).toFixed(1)}k`;
 
       const icon = L.divIcon({
-        html: `<div style="background:${color};color:white;border-radius:20px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap;border:2px solid rgba(255,255,255,0.3);box-shadow:0 2px 8px rgba(0,0,0,0.3);letter-spacing:-0.02em">${priceK}</div>`,
+        html: `<div style="display:inline-flex;flex-direction:column;align-items:center;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.35))">
+          <div style="background:${color};color:white;border-radius:20px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap;letter-spacing:-0.02em;border:2px solid rgba(255,255,255,0.25)">${priceK}</div>
+          <div style="width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid ${color};margin-top:-1px"></div>
+        </div>`,
         className: "",
         iconSize: [0, 0],
-        iconAnchor: [20, 14],
+        iconAnchor: [20, 30],
       });
 
       const price = `$${listing.price_min.toLocaleString()}/mo`;
@@ -188,7 +208,7 @@ export default function Map({ listings, selectedId, center, zoom, onPolygonChang
     if (!map || !polygonLayerRef.current) return;
     map.removeLayer(polygonLayerRef.current);
     polygonLayerRef.current = null;
-    onPolygonChange(null);
+    onPolygonChangeRef.current(null);
     setHasPolygon(false);
   };
 
