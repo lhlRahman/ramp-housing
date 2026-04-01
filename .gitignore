@@ -36,3 +36,5 @@ FF_*.json
 BG_*.json
 FurnishedFinder_*.json
 Blueground_*.json
+*.tsbuildinfo
+.claude/

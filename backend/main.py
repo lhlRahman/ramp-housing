@@ -11,7 +11,7 @@ import browser
 import config
 import db
 import geocoder
-from cities import get_all_cities, match_city
+from cities import resolve_location
 from models import Listing
 from utils import deduplicate, point_in_polygon, polygon_centroid
 from scrapers import blueground as bg_scraper
@@ -36,8 +36,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Ramp Housing API",
-    description="Aggregates housing listings globally from multiple sources",
-    version="2.0.0",
+    description="Aggregates US housing listings from multiple sources",
+    version="3.0.0",
     lifespan=lifespan,
 )
 
@@ -100,11 +100,6 @@ def _build_scraper_tasks(
     return tasks
 
 
-@app.get("/api/cities")
-async def list_cities():
-    return get_all_cities()
-
-
 @app.get("/api/search")
 async def search(
     polygon: str = Query(..., description="JSON array of [lat, lng] pairs"),
@@ -117,7 +112,6 @@ async def search(
     no_fee: bool = Query(False),
     sources: str = Query(""),
 ) -> dict[str, Any]:
-    # Validate polygon
     try:
         poly = json.loads(polygon)
         if not isinstance(poly, list) or len(poly) < 3:
@@ -125,32 +119,36 @@ async def search(
     except (json.JSONDecodeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid polygon — need JSON array of ≥3 [lat,lng] pairs")
 
-    # Auto-detect city from polygon centroid
+    # Auto-detect location from polygon centroid
     centroid_lat, centroid_lng = polygon_centroid(poly)
     location = await geocoder.reverse_geocode(centroid_lat, centroid_lng)
 
-    detected_name = None
-    city_match = None
-    if location:
-        detected_name = location.get("city") or location.get("display_name", "Unknown area")
-        city_match = match_city(location)
-
-    if not city_match:
+    if not location:
         return {
             "listings": [],
             "stats": {"total_scraped": 0, "geocoded": 0, "in_polygon": 0, "returned": 0, "skipped_no_coords": 0},
             "available_sources": [],
-            "detected_location": detected_name or "Unknown area",
-            "city_id": None,
-            "message": f"No sources available for this area ({detected_name or 'unknown location'})",
+            "detected_location": "Unknown location",
+            "message": "Could not determine location from the drawn area",
         }
 
-    city_id, city_data = city_match
-    city_slugs = city_data.get("slugs", {})
-    geocode_suffix = city_data.get("geocode_suffix", "")
+    resolved = resolve_location(location)
+
+    if not resolved:
+        area_name = location.get("city") or location.get("display_name", "this area")
+        return {
+            "listings": [],
+            "stats": {"total_scraped": 0, "geocoded": 0, "in_polygon": 0, "returned": 0, "skipped_no_coords": 0},
+            "available_sources": [],
+            "detected_location": area_name,
+            "message": f"Only US cities are currently supported. Detected: {location.get('display_name', area_name)}",
+        }
+
+    city_slugs = resolved["slugs"]
+    geocode_suffix = resolved["geocode_suffix"]
     available_sources = list(city_slugs.keys())
 
-    log.info("Detected city: %s (%s) — %d sources available", city_data["name"], city_id, len(available_sources))
+    log.info("Detected: %s — %d sources (%s)", resolved["name"], len(available_sources), ", ".join(available_sources))
 
     bed_list = [int(b) for b in bedrooms.split(",") if b.strip().isdigit()]
 
@@ -164,8 +162,7 @@ async def search(
             "listings": [],
             "stats": {"total_scraped": 0, "geocoded": 0, "in_polygon": 0, "returned": 0, "skipped_no_coords": 0},
             "available_sources": available_sources,
-            "detected_location": city_data["name"],
-            "city_id": city_id,
+            "detected_location": resolved["name"],
         }
 
     named_tasks = _build_scraper_tasks(
@@ -194,7 +191,7 @@ async def search(
 
     log.info(
         "Search [%s]: %d scraped → %d geocoded → %d in polygon → %d returned",
-        city_id, len(all_listings), len(with_coords), len(in_polygon), len(final),
+        resolved["name"], len(all_listings), len(with_coords), len(in_polygon), len(final),
     )
 
     return {
@@ -207,8 +204,7 @@ async def search(
             "skipped_no_coords": without_coords,
         },
         "available_sources": available_sources,
-        "detected_location": city_data["name"],
-        "city_id": city_id,
+        "detected_location": resolved["name"],
     }
 
 

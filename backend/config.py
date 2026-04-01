@@ -20,11 +20,8 @@ CORS_ORIGINS = [
 # Database
 DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "geocache.db"))
 
-# Geocoder
-NOMINATIM_URL = os.getenv("NOMINATIM_URL", "https://nominatim.openstreetmap.org/search")
-NOMINATIM_REVERSE_URL = os.getenv("NOMINATIM_REVERSE_URL", "https://nominatim.openstreetmap.org/reverse")
-NOMINATIM_RATE_LIMIT = float(os.getenv("NOMINATIM_RATE_LIMIT", "1.0"))  # seconds between requests
-NOMINATIM_USER_AGENT = os.getenv("NOMINATIM_USER_AGENT", "ramp-intern-housing/1.0 (hackathon project)")
+# Geocoder (Photon — free, no rate limits, OSM-based)
+NOMINATIM_USER_AGENT = os.getenv("GEOCODER_USER_AGENT", "ramp-intern-housing/1.0 (hackathon project)")
 
 # Scraper defaults
 SCRAPER_TIMEOUT = int(os.getenv("SCRAPER_TIMEOUT", "40000"))  # ms for Playwright page loads

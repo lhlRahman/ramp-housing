@@ -1,359 +1,150 @@
-"""City catalog — maps city IDs to scraper-specific slugs, map coordinates, and geocoder context."""
+"""City/location resolution — dynamic slug generation for US cities + Blueground catalog overrides."""
 
 from __future__ import annotations
 
 import re
 import unicodedata
 
-CITIES: dict[str, dict] = {
-    # === US Cities ===
-    "new-york": {
-        "name": "New York, NY",
-        "country": "USA",
-        "center": [40.7549, -73.984],
-        "zoom": 12,
-        "geocode_suffix": ", New York, NY, USA",
-        "slugs": {
-            "june_homes": "new-york",
-            "alohause": True,  # NYC-only, no slug needed
-            "blueground": "new-york-usa",
-            "furnished_finder": "us--ny--new-york",
-            "leasebreak": True,  # NYC-only
-            "renthop": "new-york-ny",
-        },
-    },
-    "san-francisco": {
-        "name": "San Francisco, CA",
-        "country": "USA",
-        "center": [37.7749, -122.4194],
-        "zoom": 13,
-        "geocode_suffix": ", San Francisco, CA, USA",
-        "slugs": {
-            "june_homes": "san-francisco",
-            "blueground": "san-francisco-bay-area-usa",
-            "furnished_finder": "us--ca--san-francisco",
-            "renthop": "san-francisco-ca",
-        },
-    },
-    "san-diego": {
-        "name": "San Diego, CA",
-        "country": "USA",
-        "center": [32.7157, -117.1611],
-        "zoom": 12,
-        "geocode_suffix": ", San Diego, CA, USA",
-        "slugs": {
-            "blueground": "san-diego-usa",
-            "furnished_finder": "us--ca--san-diego",
-        },
-    },
-    "los-angeles": {
-        "name": "Los Angeles, CA",
-        "country": "USA",
-        "center": [34.0522, -118.2437],
-        "zoom": 11,
-        "geocode_suffix": ", Los Angeles, CA, USA",
-        "slugs": {
-            "june_homes": "los-angeles",
-            "blueground": "los-angeles-usa",
-            "furnished_finder": "us--ca--los-angeles",
-            "renthop": "los-angeles-ca",
-        },
-    },
-    "chicago": {
-        "name": "Chicago, IL",
-        "country": "USA",
-        "center": [41.8781, -87.6298],
-        "zoom": 12,
-        "geocode_suffix": ", Chicago, IL, USA",
-        "slugs": {
-            "june_homes": "chicago",
-            "blueground": "chicago-usa",
-            "furnished_finder": "us--il--chicago",
-            "renthop": "chicago-il",
-        },
-    },
-    "washington-dc": {
-        "name": "Washington, DC",
-        "country": "USA",
-        "center": [38.9072, -77.0369],
-        "zoom": 13,
-        "geocode_suffix": ", Washington, DC, USA",
-        "slugs": {
-            "june_homes": "washington-dc",
-            "blueground": "washington-dc-usa",
-            "furnished_finder": "us--dc--washington",
-            "renthop": "washington-dc",
-        },
-    },
-    "boston": {
-        "name": "Boston, MA",
-        "country": "USA",
-        "center": [42.3601, -71.0589],
-        "zoom": 13,
-        "geocode_suffix": ", Boston, MA, USA",
-        "slugs": {
-            "june_homes": "boston",
-            "blueground": "boston-usa",
-            "furnished_finder": "us--ma--boston",
-            "renthop": "boston-ma",
-        },
-    },
-    "miami": {
-        "name": "Miami, FL",
-        "country": "USA",
-        "center": [25.7617, -80.1918],
-        "zoom": 12,
-        "geocode_suffix": ", Miami, FL, USA",
-        "slugs": {
-            "june_homes": "miami",
-            "blueground": "miami-fl",
-            "furnished_finder": "us--fl--miami",
-            "renthop": "miami-fl",
-        },
-    },
-    "austin": {
-        "name": "Austin, TX",
-        "country": "USA",
-        "center": [30.2672, -97.7431],
-        "zoom": 12,
-        "geocode_suffix": ", Austin, TX, USA",
-        "slugs": {
-            "june_homes": "austin",
-            "blueground": "austin-tx",
-            "furnished_finder": "us--tx--austin",
-        },
-    },
-    "seattle": {
-        "name": "Seattle, WA",
-        "country": "USA",
-        "center": [47.6062, -122.3321],
-        "zoom": 12,
-        "geocode_suffix": ", Seattle, WA, USA",
-        "slugs": {
-            "june_homes": "seattle",
-            "blueground": "seattle-usa",
-            "furnished_finder": "us--wa--seattle",
-        },
-    },
-    "denver": {
-        "name": "Denver, CO",
-        "country": "USA",
-        "center": [39.7392, -104.9903],
-        "zoom": 12,
-        "geocode_suffix": ", Denver, CO, USA",
-        "slugs": {
-            "blueground": "denver-usa",
-            "furnished_finder": "us--co--denver",
-        },
-    },
-    "philadelphia": {
-        "name": "Philadelphia, PA",
-        "country": "USA",
-        "center": [39.9526, -75.1652],
-        "zoom": 12,
-        "geocode_suffix": ", Philadelphia, PA, USA",
-        "slugs": {
-            "june_homes": "philadelphia",
-            "furnished_finder": "us--pa--philadelphia",
-            "renthop": "philadelphia-pa",
-        },
-    },
-    "nashville": {
-        "name": "Nashville, TN",
-        "country": "USA",
-        "center": [36.1627, -86.7816],
-        "zoom": 12,
-        "geocode_suffix": ", Nashville, TN, USA",
-        "slugs": {
-            "blueground": "nashville-tn",
-            "furnished_finder": "us--tn--nashville",
-        },
-    },
-    "atlanta": {
-        "name": "Atlanta, GA",
-        "country": "USA",
-        "center": [33.749, -84.388],
-        "zoom": 12,
-        "geocode_suffix": ", Atlanta, GA, USA",
-        "slugs": {
-            "furnished_finder": "us--ga--atlanta",
-        },
-    },
-    "dallas": {
-        "name": "Dallas, TX",
-        "country": "USA",
-        "center": [32.7767, -96.797],
-        "zoom": 11,
-        "geocode_suffix": ", Dallas, TX, USA",
-        "slugs": {
-            "blueground": "dallas-tx",
-            "furnished_finder": "us--tx--dallas",
-        },
-    },
-    "houston": {
-        "name": "Houston, TX",
-        "country": "USA",
-        "center": [29.7604, -95.3698],
-        "zoom": 11,
-        "geocode_suffix": ", Houston, TX, USA",
-        "slugs": {
-            "furnished_finder": "us--tx--houston",
-        },
-    },
-    # === International (Blueground cities) ===
-    "toronto": {
-        "name": "Toronto, Canada",
-        "country": "Canada",
-        "center": [43.6532, -79.3832],
-        "zoom": 12,
-        "geocode_suffix": ", Toronto, ON, Canada",
-        "slugs": {
-            "blueground": "toronto-canada",
-        },
-    },
-    "mexico-city": {
-        "name": "Mexico City, Mexico",
-        "country": "Mexico",
-        "center": [19.4326, -99.1332],
-        "zoom": 12,
-        "geocode_suffix": ", Mexico City, Mexico",
-        "slugs": {
-            "blueground": "mexico-city",
-        },
-    },
-    "sao-paulo": {
-        "name": "São Paulo, Brazil",
-        "country": "Brazil",
-        "center": [-23.5505, -46.6333],
-        "zoom": 12,
-        "geocode_suffix": ", São Paulo, Brazil",
-        "slugs": {
-            "blueground": "sao-paulo",
-        },
-    },
-    "rio-de-janeiro": {
-        "name": "Rio de Janeiro, Brazil",
-        "country": "Brazil",
-        "center": [-22.9068, -43.1729],
-        "zoom": 12,
-        "geocode_suffix": ", Rio de Janeiro, Brazil",
-        "slugs": {
-            "blueground": "rio-de-janeiro",
-        },
-    },
-    "athens": {
-        "name": "Athens, Greece",
-        "country": "Greece",
-        "center": [37.9838, 23.7275],
-        "zoom": 13,
-        "geocode_suffix": ", Athens, Greece",
-        "slugs": {
-            "blueground": "athens-greece",
-        },
-    },
-    "barcelona": {
-        "name": "Barcelona, Spain",
-        "country": "Spain",
-        "center": [41.3874, 2.1686],
-        "zoom": 13,
-        "geocode_suffix": ", Barcelona, Spain",
-        "slugs": {
-            "blueground": "barcelona-es",
-        },
-    },
-    "istanbul": {
-        "name": "Istanbul, Turkey",
-        "country": "Turkey",
-        "center": [41.0082, 28.9784],
-        "zoom": 12,
-        "geocode_suffix": ", Istanbul, Turkey",
-        "slugs": {
-            "blueground": "istanbul-turkey",
-        },
-    },
-    "dubai": {
-        "name": "Dubai, UAE",
-        "country": "UAE",
-        "center": [25.2048, 55.2708],
-        "zoom": 12,
-        "geocode_suffix": ", Dubai, UAE",
-        "slugs": {
-            "blueground": "dubai-uae",
-        },
-    },
-    "vienna": {
-        "name": "Vienna, Austria",
-        "country": "Austria",
-        "center": [48.2082, 16.3738],
-        "zoom": 13,
-        "geocode_suffix": ", Vienna, Austria",
-        "slugs": {
-            "blueground": "vienna-austria",
-        },
-    },
+# US state name → abbreviation mapping
+US_STATES: dict[str, str] = {
+    "alabama": "al", "alaska": "ak", "arizona": "az", "arkansas": "ar",
+    "california": "ca", "colorado": "co", "connecticut": "ct", "delaware": "de",
+    "florida": "fl", "georgia": "ga", "hawaii": "hi", "idaho": "id",
+    "illinois": "il", "indiana": "in", "iowa": "ia", "kansas": "ks",
+    "kentucky": "ky", "louisiana": "la", "maine": "me", "maryland": "md",
+    "massachusetts": "ma", "michigan": "mi", "minnesota": "mn", "mississippi": "ms",
+    "missouri": "mo", "montana": "mt", "nebraska": "ne", "nevada": "nv",
+    "new hampshire": "nh", "new jersey": "nj", "new mexico": "nm", "new york": "ny",
+    "north carolina": "nc", "north dakota": "nd", "ohio": "oh", "oklahoma": "ok",
+    "oregon": "or", "pennsylvania": "pa", "rhode island": "ri", "south carolina": "sc",
+    "south dakota": "sd", "tennessee": "tn", "texas": "tx", "utah": "ut",
+    "vermont": "vt", "virginia": "va", "washington": "wa", "west virginia": "wv",
+    "wisconsin": "wi", "wyoming": "wy", "district of columbia": "dc",
+}
+
+# Blueground slug overrides — their slugs are hand-curated and unpredictable
+BLUEGROUND_SLUGS: dict[str, str] = {
+    # Format: "city_lower:state_abbr" → blueground slug
+    "new york:ny": "new-york-usa",
+    "san francisco:ca": "san-francisco-bay-area-usa",
+    "los angeles:ca": "los-angeles-usa",
+    "chicago:il": "chicago-usa",
+    "washington:dc": "washington-dc-usa",
+    "boston:ma": "boston-usa",
+    "miami:fl": "miami-fl",
+    "austin:tx": "austin-tx",
+    "seattle:wa": "seattle-usa",
+    "denver:co": "denver-usa",
+    "dallas:tx": "dallas-tx",
+    "nashville:tn": "nashville-tn",
+    "san diego:ca": "san-diego-usa",
+    "portland:or": "portland-or",
+}
+
+# NYC-specific: these scrapers only work in New York
+NYC_ONLY_SCRAPERS = {"alohause", "leasebreak"}
+
+# Cities where we know the Nominatim "city" field is different from expected
+CITY_ALIASES: dict[str, str] = {
+    "new york city": "new york",
+    "city of new york": "new york",
+    "manhattan": "new york",
+    "brooklyn": "new york",
+    "queens": "new york",
+    "bronx": "new york",
+    "staten island": "new york",
 }
 
 
-def _normalize(s: str) -> str:
-    """Lowercase, strip accents, remove punctuation."""
-    s = unicodedata.normalize("NFD", s)
+def _slugify(name: str) -> str:
+    """Convert city name to URL slug: lowercase, hyphenated, no special chars."""
+    s = unicodedata.normalize("NFD", name)
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
     s = re.sub(r"[^a-z0-9 ]", "", s.lower())
-    return s.strip()
+    s = re.sub(r"\s+", "-", s.strip())
+    return s
 
 
-# Pre-build lookup: (normalized_city_name, city_id)
-_CITY_NAMES: list[tuple[str, str]] = []
-for _cid, _city in CITIES.items():
-    _city_part = _city["name"].split(",")[0].strip()
-    _CITY_NAMES.append((_normalize(_city_part), _cid))
+def _get_state_abbr(state_name: str) -> str | None:
+    """Convert full state name to 2-letter abbreviation."""
+    return US_STATES.get(state_name.lower().strip())
 
 
-def match_city(location: dict) -> tuple[str, dict] | None:
-    """Given a reverse-geocoded location dict {city, state, country, display_name},
-    find the best matching city_id in our catalog.
-    Returns (city_id, city_data) or None."""
-    rev_city = _normalize(location.get("city") or "")
+def resolve_location(location: dict) -> dict | None:
+    """Given a Nominatim reverse-geocode result {city, state, country, country_code, display_name},
+    resolve to scraper slugs, geocode suffix, and display name.
 
-    # Pass 1: exact match
-    for norm_name, cid in _CITY_NAMES:
-        if rev_city and rev_city == norm_name:
-            return cid, CITIES[cid]
+    Returns None if not in the US.
+    Returns dict with: name, geocode_suffix, slugs, is_nyc
+    """
+    country_code = (location.get("country_code") or "").lower()
+    if country_code != "us":
+        return None
 
-    # Pass 2: containment (handles "New York City" matching "new york")
-    for norm_name, cid in _CITY_NAMES:
-        if rev_city and (rev_city in norm_name or norm_name in rev_city):
-            return cid, CITIES[cid]
+    raw_city = location.get("city") or location.get("town") or location.get("municipality") or location.get("village") or ""
+    state_name = location.get("state") or ""
 
-    # Pass 3: check display_name
-    norm_display = _normalize(location.get("display_name", ""))
-    for norm_name, cid in _CITY_NAMES:
-        if len(norm_name) > 3 and norm_name in norm_display:
-            return cid, CITIES[cid]
+    if not raw_city:
+        return None
 
-    return None
+    # Normalize city name via aliases
+    city_lower = raw_city.lower().strip()
+    city_lower = CITY_ALIASES.get(city_lower, city_lower)
 
+    state_abbr = _get_state_abbr(state_name)
+    if not state_abbr:
+        return None
 
-def get_city(city_id: str) -> dict | None:
-    return CITIES.get(city_id)
+    city_slug = _slugify(city_lower)
+    is_nyc = (city_lower == "new york" and state_abbr == "ny")
 
+    # Build display name
+    display_name = f"{raw_city}, {state_abbr.upper()}"
+    geocode_suffix = f", {raw_city}, {state_abbr.upper()}, USA"
 
-def get_available_sources(city_id: str) -> list[str]:
-    city = CITIES.get(city_id)
-    if not city:
-        return []
-    return list(city.get("slugs", {}).keys())
+    # Build scraper slugs dynamically
+    slugs: dict[str, str | bool] = {}
+
+    # June Homes: simple city slug
+    slugs["june_homes"] = city_slug
+
+    # Furnished Finder: us--{state}--{city}
+    slugs["furnished_finder"] = f"us--{state_abbr}--{city_slug}"
+
+    # RentHop: {city}-{state} (special case: washington-dc not washington-dc-dc)
+    if city_lower == "washington" and state_abbr == "dc":
+        slugs["renthop"] = "washington-dc"
+    else:
+        slugs["renthop"] = f"{city_slug}-{state_abbr}"
+
+    # Blueground: catalog lookup only
+    bg_key = f"{city_lower}:{state_abbr}"
+    if bg_key in BLUEGROUND_SLUGS:
+        slugs["blueground"] = BLUEGROUND_SLUGS[bg_key]
+
+    # NYC-only scrapers
+    if is_nyc:
+        slugs["alohause"] = True
+        slugs["leasebreak"] = True
+
+    return {
+        "name": display_name,
+        "geocode_suffix": geocode_suffix,
+        "slugs": slugs,
+        "is_nyc": is_nyc,
+        "city": city_lower,
+        "state": state_abbr,
+    }
 
 
 def get_all_cities() -> list[dict]:
+    """Return the Blueground catalog cities for reference (optional endpoint)."""
     result = []
-    for cid, city in CITIES.items():
+    for bg_key, bg_slug in BLUEGROUND_SLUGS.items():
+        city, state = bg_key.split(":")
         result.append({
-            "id": cid,
-            "name": city["name"],
-            "country": city["country"],
-            "center": city["center"],
-            "zoom": city["zoom"],
-            "sources": list(city.get("slugs", {}).keys()),
+            "id": f"{_slugify(city)}-{state}",
+            "name": f"{city.title()}, {state.upper()}",
+            "blueground_slug": bg_slug,
         })
     return result

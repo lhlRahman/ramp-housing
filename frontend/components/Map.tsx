@@ -51,6 +51,14 @@ export default function Map({ listings, selectedId, center, zoom, onPolygonChang
       maxZoom: 19,
     }).addTo(map);
 
+    // Restrict to US bounds
+    const usBounds = L.latLngBounds(
+      L.latLng(24.396308, -125.0), // SW corner
+      L.latLng(49.384358, -66.93),  // NE corner
+    );
+    map.setMaxBounds(usBounds.pad(0.1));
+    map.options.minZoom = 4;
+
     // Init geoman without toolbar
     (map as any).pm.addControls({
       position: "topleft",
