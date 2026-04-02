@@ -64,6 +64,12 @@ export interface SearchResult {
 
 export type SortOption = "price_asc" | "price_desc" | "bedrooms" | "source";
 
+export interface SourceStatus {
+  status: "pending" | "scraping" | "done" | "error";
+  count: number;
+  cached: boolean;
+}
+
 export const SOURCE_LABELS: Record<string, string> = {
   june_homes: "June Homes",
   alohause: "Alohause",

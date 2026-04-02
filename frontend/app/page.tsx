@@ -4,8 +4,8 @@ import dynamic from "next/dynamic";
 import FiltersBar from "@/components/FiltersBar";
 import ListingCard from "@/components/ListingCard";
 import ListingDetail from "@/components/ListingDetail";
-import { Listing, SearchFilters, SortOption } from "@/lib/types";
-import { searchListings, parseFilters } from "@/lib/api";
+import { Listing, SearchFilters, SortOption, SourceStatus, SOURCE_LABELS, SOURCE_COLORS } from "@/lib/types";
+import { searchListingsWS, parseFilters } from "@/lib/api";
 
 const Map = dynamic(() => import("@/components/Map"), { ssr: false });
 
@@ -42,7 +42,8 @@ export default function Home() {
   const [stats, setStats] = useState<Record<string, number> | null>(null);
   const [sort, setSort] = useState<SortOption>("price_asc");
   const [showEmptyState, setShowEmptyState] = useState(true);
-  const searchRef = useRef<AbortController | null>(null);
+  const [sourceStatuses, setSourceStatuses] = useState<Record<string, SourceStatus>>({});
+  const wsCloseRef = useRef<(() => void) | null>(null);
 
   // Auto-detected from search response
   const [detectedLocation, setDetectedLocation] = useState<string | null>(null);
@@ -65,33 +66,39 @@ export default function Home() {
     );
   }, []);
 
-  const doSearch = useCallback(async (poly: [number, number][], f: SearchFilters) => {
-    if (searchRef.current) searchRef.current.abort();
-    const controller = new AbortController();
-    searchRef.current = controller;
+  const doSearch = useCallback((poly: [number, number][], f: SearchFilters) => {
+    if (wsCloseRef.current) wsCloseRef.current();
     setLoading(true);
     setError(null);
     setNoSourcesMessage(null);
-    try {
-      const result = await searchListings(poly, f);
-      if (controller.signal.aborted) return;
-      setListings(result.listings);
-      setStats(result.stats);
-      setDetectedLocation(result.detected_location);
-      setAvailableSources(result.available_sources);
-      if (result.message) {
-        setNoSourcesMessage(result.message);
-      }
-      // Populate sources on first search for this area
-      if (result.available_sources.length > 0 && f.sources.length === 0) {
-        setFilters(prev => ({ ...prev, sources: result.available_sources }));
-      }
-    } catch (e) {
-      if (controller.signal.aborted) return;
-      setError(e instanceof Error ? e.message : "Search failed");
-    } finally {
-      if (!controller.signal.aborted) setLoading(false);
-    }
+    setListings([]);
+    setStats(null);
+    setSourceStatuses({});
+
+    const close = searchListingsWS(poly, f, {
+      onInit: (detectedLocation, availableSources) => {
+        setDetectedLocation(detectedLocation);
+        setAvailableSources(availableSources);
+        if (availableSources.length > 0 && f.sources.length === 0) {
+          setFilters(prev => ({ ...prev, sources: availableSources }));
+        }
+      },
+      onListings: (newListings) => {
+        setListings(prev => [...prev, ...newListings]);
+      },
+      onSourceStatus: (source, status) => {
+        setSourceStatuses(prev => ({ ...prev, [source]: status }));
+      },
+      onDone: (stats) => {
+        setStats(stats);
+        setLoading(false);
+      },
+      onError: (message) => {
+        setError(message);
+        setLoading(false);
+      },
+    });
+    wsCloseRef.current = close;
   }, []);
 
   const handlePolygonChange = useCallback(async (poly: [number, number][] | null) => {
@@ -161,17 +168,52 @@ export default function Home() {
             onDrawStart={() => setShowEmptyState(false)}
           />
 
-          {loading && (
+          {loading && Object.keys(sourceStatuses).length > 0 && (
+            <div className="absolute top-3 right-3 z-[1000] pointer-events-none">
+              <div className="bg-surface-2/95 backdrop-blur border border-border rounded-xl px-4 py-3 shadow-card-hover min-w-[200px]">
+                <p className="text-xs font-semibold text-text-primary mb-2">
+                  {detectedLocation ? `Scraping ${detectedLocation}` : "Detecting location..."}
+                </p>
+                <div className="space-y-1.5">
+                  {Object.entries(sourceStatuses).map(([src, s]) => (
+                    <div key={src} className="flex items-center gap-2 text-[11px]">
+                      <div
+                        className="w-1.5 h-1.5 rounded-full shrink-0"
+                        style={{
+                          backgroundColor:
+                            s.status === "done" ? (s.count > 0 ? "#22c55e" : "#6b7280")
+                            : s.status === "error" ? "#ef4444"
+                            : SOURCE_COLORS[src] || "#6b7280",
+                          animation: s.status === "scraping" ? "pulse 1.5s infinite" : "none",
+                        }}
+                      />
+                      <span className="text-text-secondary flex-1">
+                        {SOURCE_LABELS[src] || src}
+                      </span>
+                      <span className={`font-mono tabular-nums ${
+                        s.status === "done" ? (s.count > 0 ? "text-ramp-lime" : "text-text-muted")
+                        : s.status === "error" ? "text-red-400"
+                        : "text-text-muted"
+                      }`}>
+                        {s.status === "scraping" ? "..." :
+                         s.status === "error" ? "err" :
+                         s.cached ? `${s.count} (cached)` : String(s.count)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {loading && Object.keys(sourceStatuses).length === 0 && (
             <div className="absolute inset-0 bg-surface-0/80 backdrop-blur-sm flex items-center justify-center z-[1000] pointer-events-none">
               <div className="bg-surface-2 border border-border rounded-2xl px-8 py-6 flex flex-col items-center shadow-card-hover">
                 <div className="relative w-10 h-10 mb-3">
                   <div className="absolute inset-0 rounded-full border-[3px] border-surface-4" />
                   <div className="absolute inset-0 rounded-full border-[3px] border-ramp-lime border-t-transparent animate-spin" />
                 </div>
-                <p className="text-sm font-semibold text-text-primary">
-                  {detectedLocation ? `Searching ${detectedLocation}...` : "Detecting location..."}
-                </p>
-                <p className="text-xs text-text-muted mt-1">Live scraping — takes ~15s</p>
+                <p className="text-sm font-semibold text-text-primary">Detecting location...</p>
               </div>
             </div>
           )}

@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -115,6 +115,146 @@ def _build_scraper_tasks(
             tasks.append(("craigslist", craigslist.scrape(cl_data["city"], cl_data["state"], min_price, max_price, bed_list)))
 
     return tasks
+
+
+@app.websocket("/api/ws/search")
+async def ws_search(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        raw = await websocket.receive_text()
+        params = json.loads(raw)
+    except Exception:
+        await websocket.close(code=1003)
+        return
+
+    try:
+        poly = params.get("polygon", [])
+        if not isinstance(poly, list) or len(poly) < 3:
+            await websocket.send_json({"type": "error", "message": "Invalid polygon"})
+            return
+
+        check_in = params.get("check_in")
+        check_out = params.get("check_out")
+        min_price = int(params.get("min_price", 0))
+        max_price = int(params.get("max_price", 50000))
+        bed_list = [int(b) for b in params.get("bedrooms", "0,1,2,3").split(",") if str(b).strip().isdigit()]
+        furnished = params.get("furnished", False)
+        no_fee = params.get("no_fee", False)
+        sources_param = params.get("sources", "")
+
+        centroid_lat, centroid_lng = polygon_centroid(poly)
+        location = await geocoder.reverse_geocode(centroid_lat, centroid_lng)
+
+        if not location:
+            await websocket.send_json({"type": "error", "message": "Could not determine location"})
+            return
+
+        resolved = resolve_location(location)
+        if not resolved:
+            area_name = location.get("city") or location.get("display_name", "this area")
+            await websocket.send_json({"type": "error", "message": f"Only US cities are supported. Detected: {area_name}"})
+            return
+
+        city_slugs = resolved["slugs"]
+        geocode_suffix = resolved["geocode_suffix"]
+        available_sources = list(city_slugs.keys())
+
+        if sources_param:
+            source_list = [s.strip() for s in sources_param.split(",") if s.strip() in available_sources]
+        else:
+            source_list = available_sources
+
+        await websocket.send_json({
+            "type": "init",
+            "detected_location": resolved["name"],
+            "available_sources": available_sources,
+        })
+
+        if not source_list:
+            await websocket.send_json({"type": "done", "stats": {"total_scraped": 0, "geocoded": 0, "in_polygon": 0, "returned": 0, "skipped_no_coords": 0}})
+            return
+
+        params_hash = hashlib.md5(json.dumps({
+            "ci": check_in, "co": check_out, "min": min_price, "max": max_price,
+            "beds": sorted(bed_list), "furn": furnished, "nofee": no_fee,
+        }, sort_keys=True).encode()).hexdigest()[:12]
+        city_key = f"{resolved['city']}:{resolved['state']}"
+
+        total_stats = {"total_scraped": 0, "geocoded": 0, "in_polygon": 0, "returned": 0, "skipped_no_coords": 0}
+        seen_ids: set[str] = set()
+
+        async def _process_and_send(src_name: str, batch: list[Listing]) -> None:
+            nonlocal total_stats
+            if furnished:
+                batch = [l for l in batch if l.furnished]
+            batch = await geocode_listings(batch, geocode_suffix)
+            with_coords = [l for l in batch if l.lat is not None and l.lng is not None]
+            in_poly = [l for l in with_coords if l.lat is not None and l.lng is not None and point_in_polygon(l.lat, l.lng, poly)]
+            final = deduplicate(in_poly)
+            # Cross-batch dedup
+            final = [l for l in final if l.id not in seen_ids]
+            for l in final:
+                seen_ids.add(l.id)
+            total_stats["total_scraped"] += len(batch)
+            total_stats["geocoded"] += len(with_coords)
+            total_stats["in_polygon"] += len(in_poly)
+            total_stats["returned"] += len(final)
+            total_stats["skipped_no_coords"] += len(batch) - len(with_coords)
+            if final:
+                await websocket.send_json({
+                    "type": "listings",
+                    "source": src_name,
+                    "listings": [l.model_dump() for l in final],
+                })
+
+        # Serve cached sources immediately
+        uncached_sources = []
+        for src in source_list:
+            cached = get_cached_scrape(src, city_key, params_hash)
+            if cached is not None:
+                batch = [Listing(**l) for l in cached]
+                await _process_and_send(src, batch)
+                await websocket.send_json({"type": "source_status", "source": src, "status": "done", "count": len(batch), "cached": True})
+            else:
+                uncached_sources.append(src)
+                await websocket.send_json({"type": "source_status", "source": src, "status": "scraping", "count": 0, "cached": False})
+
+        # Scrape uncached sources concurrently, stream as each finishes
+        if uncached_sources:
+            named_tasks = _build_scraper_tasks(
+                city_slugs, check_in, check_out, min_price, max_price, bed_list, uncached_sources, furnished, no_fee,
+            )
+            task_to_src: dict[asyncio.Task, str] = {}
+            for src_name, coro in named_tasks:
+                t = asyncio.create_task(coro)
+                task_to_src[t] = src_name
+
+            pending = set(task_to_src.keys())
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    src_name = task_to_src[task]
+                    try:
+                        result: list[Listing] = task.result()
+                    except Exception as exc:
+                        log.error("Scraper %s failed: %s", src_name, exc)
+                        await websocket.send_json({"type": "source_status", "source": src_name, "status": "error", "count": 0, "cached": False})
+                        continue
+                    log.info("Scraper %s returned %d listings", src_name, len(result))
+                    cache_scrape(src_name, city_key, params_hash, [l.model_dump() for l in result])
+                    await _process_and_send(src_name, result)
+                    await websocket.send_json({"type": "source_status", "source": src_name, "status": "done", "count": len(result), "cached": False})
+
+        await websocket.send_json({"type": "done", "stats": total_stats})
+
+    except WebSocketDisconnect:
+        log.info("WS client disconnected")
+    except Exception as e:
+        log.error("WS search error: %s", e)
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
 
 
 @app.get("/api/search")

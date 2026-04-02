@@ -48,6 +48,9 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
       shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
     });
 
+    // StrictMode runs cleanup+remount; Leaflet leaves _leaflet_id on the DOM so clear it
+    delete (containerRef.current as any)._leaflet_id;
+
     const map = L.map(containerRef.current).setView(center, zoom);
     mapRef.current = map;
 
@@ -133,47 +136,59 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
     }
   }, [center[0], center[1], zoom]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sync markers
+  // Sync markers — incremental: only add new, remove stale
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    markersRef.current.forEach((marker) => map.removeLayer(marker));
-    markersRef.current.clear();
+    const currentIds = new Set(listings.map((l) => l.id));
+
+    // Remove markers for listings that are gone
+    markersRef.current.forEach((marker, id) => {
+      if (!currentIds.has(id)) {
+        map.removeLayer(marker);
+        markersRef.current.delete(id);
+      }
+    });
+
+    // Add markers for new listings only
+    const newListings = listings.filter((l) => !markersRef.current.has(l.id));
+    if (newListings.length === 0) return;
 
     (async () => {
       const L = (await import("leaflet")).default;
-      for (const listing of listings) {
+      for (const listing of newListings) {
         if (listing.lat == null || listing.lng == null) continue;
         if (!mapRef.current) break;
 
         const color = SOURCE_COLORS[listing.source] || "#6b7280";
+
         const priceK = listing.price_min >= 10000
           ? `$${Math.round(listing.price_min / 1000)}k`
           : `$${(listing.price_min / 1000).toFixed(1)}k`;
 
-      const icon = L.divIcon({
-        html: `<div style="display:inline-flex;flex-direction:column;align-items:center;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.35))">
-          <div style="background:${color};color:white;border-radius:20px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap;letter-spacing:-0.02em;border:2px solid rgba(255,255,255,0.25)">${priceK}</div>
-          <div style="width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid ${color};margin-top:-1px"></div>
-        </div>`,
-        className: "",
-        iconSize: [0, 0],
-        iconAnchor: [20, 30],
-      });
+        const icon = L.divIcon({
+          html: `<div style="display:inline-flex;flex-direction:column;align-items:center;filter:drop-shadow(0 2px 4px rgba(0,0,0,0.35))">
+            <div style="background:${color};color:white;border-radius:20px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap;letter-spacing:-0.02em;border:2px solid rgba(255,255,255,0.25)">${priceK}</div>
+            <div style="width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid ${color};margin-top:-1px"></div>
+          </div>`,
+          className: "",
+          iconSize: [0, 0],
+          iconAnchor: [20, 30],
+        });
 
-      const price = `$${listing.price_min.toLocaleString()}/mo`;
-      const beds = listing.bedrooms === 0 ? "Studio" : `${listing.bedrooms} BR`;
-      const marker = L.marker([listing.lat, listing.lng], { icon })
-        .addTo(map)
-        .bindPopup(
-          `<div style="font-family:Inter,system-ui,sans-serif;min-width:180px">` +
-          `<div style="font-weight:600;font-size:13px;margin-bottom:2px">${listing.title}</div>` +
-          `<div style="color:#6b7280;font-size:12px;margin-bottom:4px">${listing.address}</div>` +
-          `<div style="font-weight:700;font-size:14px">${price}</div>` +
-          `<div style="color:#6b7280;font-size:12px">${beds} · ${listing.bathrooms} BA</div>` +
-          `</div>`
-        );
+        const price = `$${listing.price_min.toLocaleString()}/mo`;
+        const beds = listing.bedrooms === 0 ? "Studio" : `${listing.bedrooms} BR`;
+        const marker = L.marker([listing.lat, listing.lng], { icon })
+          .addTo(map)
+          .bindPopup(
+            `<div style="font-family:Inter,system-ui,sans-serif;min-width:180px">` +
+            `<div style="font-weight:600;font-size:13px;margin-bottom:2px">${listing.title}</div>` +
+            `<div style="color:#6b7280;font-size:12px;margin-bottom:4px">${listing.address}</div>` +
+            `<div style="font-weight:700;font-size:14px">${price}</div>` +
+            `<div style="color:#6b7280;font-size:12px">${beds} · ${listing.bathrooms} BA</div>` +
+            `</div>`
+          );
 
         marker.on("click", () => onSelectListing(listing.id));
         markersRef.current.set(listing.id, marker);

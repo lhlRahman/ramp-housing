@@ -65,14 +65,15 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
 
     listings: list[Listing] = []
     url = _build_url(city_slug, min_price, max_price, bedrooms, no_fee)
-    max_pages = 8
     pages_scraped = 0
     consecutive_timeouts = 0
 
     br = await shared_browser._ensure_browser()
 
     try:
-        for pg in range(1, max_pages + 1):
+        pg = 0
+        while True:
+            pg += 1
             page_url = url if pg == 1 else url + f"&page={pg}"
 
             ctx = await br.new_context(

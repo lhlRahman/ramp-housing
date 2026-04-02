@@ -104,8 +104,7 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
             offset += PAGE_SIZE
             total = data.get("matching", 0)
 
-            # Cap at 500 listings to keep response times reasonable
-            if offset >= total or offset >= 500:
+            if offset >= total:
                 break
 
     log.info("%d listings", len(listings))
