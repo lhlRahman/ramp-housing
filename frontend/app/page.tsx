@@ -5,7 +5,7 @@ import FiltersBar from "@/components/FiltersBar";
 import ListingCard from "@/components/ListingCard";
 import ListingDetail from "@/components/ListingDetail";
 import { Listing, SearchFilters, SortOption } from "@/lib/types";
-import { searchListings } from "@/lib/api";
+import { searchListings, parseFilters } from "@/lib/api";
 
 const Map = dynamic(() => import("@/components/Map"), { ssr: false });
 
@@ -48,6 +48,8 @@ export default function Home() {
   const [detectedLocation, setDetectedLocation] = useState<string | null>(null);
   const [availableSources, setAvailableSources] = useState<string[]>([]);
   const [noSourcesMessage, setNoSourcesMessage] = useState<string | null>(null);
+  const [parsedSummary, setParsedSummary] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState("");
 
   // Map defaults — center of US, or browser geolocation
   const [mapCenter, setMapCenter] = useState<[number, number]>([40.7128, -74.006]);
@@ -92,19 +94,36 @@ export default function Home() {
     }
   }, []);
 
-  const handlePolygonChange = useCallback((poly: [number, number][] | null) => {
+  const handlePolygonChange = useCallback(async (poly: [number, number][] | null) => {
     setPolygon(poly);
-    if (poly) doSearch(poly, filters);
-    else {
+    if (poly) {
+      setLoading(true);
+      if (prompt.trim()) {
+        const { filters: parsed } = await parseFilters(prompt.trim());
+        const newFilters = { ...filters, ...parsed, sources: filters.sources };
+        setFilters(newFilters);
+        doSearch(poly, newFilters);
+      } else {
+        doSearch(poly, filters);
+      }
+    } else {
       setListings([]); setStats(null);
       setDetectedLocation(null); setAvailableSources([]);
       setNoSourcesMessage(null);
     }
-  }, [doSearch, filters]);
+  }, [doSearch, filters, prompt]);
 
   const handleSearch = useCallback(() => {
     if (polygon) doSearch(polygon, filters);
   }, [polygon, filters, doSearch]);
+
+  const handlePromptSearch = useCallback(async (prompt: string) => {
+    const { filters: parsed, summary } = await parseFilters(prompt);
+    const newFilters = { ...filters, ...parsed, sources: filters.sources };
+    setFilters(newFilters);
+    setParsedSummary(summary || null);
+    if (polygon) doSearch(polygon, newFilters);
+  }, [filters, polygon, doSearch]);
 
   const sorted = useMemo(() => sortListings(listings, sort), [listings, sort]);
   const sourceCounts = useMemo(() => listings.reduce<Record<string, number>>((acc, l) => {
@@ -118,11 +137,15 @@ export default function Home() {
         filters={filters}
         onChange={setFilters}
         onSearch={handleSearch}
+        onPromptSearch={handlePromptSearch}
+        prompt={prompt}
+        onPromptChange={setPrompt}
         hasPolygon={!!polygon}
         loading={loading}
         availableSources={availableSources}
         detectedLocation={detectedLocation}
         noSourcesMessage={noSourcesMessage}
+        parsedSummary={parsedSummary}
       />
 
       <div className="flex flex-1 overflow-hidden">

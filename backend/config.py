@@ -32,5 +32,8 @@ USER_AGENT = os.getenv(
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
 )
 
+# xAI / Grok
+XAI_API_KEY = os.getenv("XAI_API_KEY", "")
+
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()

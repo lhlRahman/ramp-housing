@@ -1,11 +1,15 @@
 import asyncio
+import datetime
 import hashlib
 import json
 import logging
+import re
 from contextlib import asynccontextmanager
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
 import browser
@@ -263,6 +267,63 @@ async def listing_detail(url: str = Query(..., description="Original listing URL
     except Exception as e:
         log.error("Detail scrape failed for %s: %s", url, e)
         raise HTTPException(status_code=502, detail="Failed to scrape listing detail")
+
+
+class ParseFiltersRequest(BaseModel):
+    prompt: str
+
+
+@app.post("/api/parse-filters")
+async def parse_filters(body: ParseFiltersRequest) -> dict[str, Any]:
+    prompt_text = body.prompt.strip()
+    if not prompt_text:
+        return {"filters": {}, "summary": ""}
+
+    if not config.XAI_API_KEY:
+        raise HTTPException(status_code=503, detail="XAI_API_KEY not configured")
+
+    today = datetime.date.today().isoformat()
+    system = f"""You are a housing search filter parser. Extract structured filters from natural language.
+
+Return ONLY a valid JSON object. Include only fields that are clearly mentioned:
+- checkIn: "YYYY-MM-DD"
+- checkOut: "YYYY-MM-DD"
+- minPrice: number (monthly rent)
+- maxPrice: number (monthly rent)
+- bedrooms: array of ints (0=studio, 1, 2, 3) — include all that match, e.g. "1 or 2 BR" → [1,2]
+- furnished: true/false
+- noFee: true/false
+- summary: short human-readable label, e.g. "Furnished 1BR · $2–3k · Jun–Aug"
+
+Today is {today}. Interpret relative dates (e.g. "this summer", "next month") accordingly."""
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            "https://api.x.ai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {config.XAI_API_KEY}"},
+            json={
+                "model": "grok-3-mini",
+                "max_tokens": 300,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt_text},
+                ],
+            },
+        )
+        resp.raise_for_status()
+
+    text = resp.json()["choices"][0]["message"]["content"].strip()
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        text = match.group()
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail="Failed to parse AI response")
+
+    summary = data.pop("summary", "")
+    return {"filters": data, "summary": summary}
 
 
 @app.get("/api/health")

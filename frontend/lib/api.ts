@@ -24,6 +24,16 @@ export async function searchListings(
   return resp.json();
 }
 
+export async function parseFilters(prompt: string): Promise<{ filters: Partial<SearchFilters>; summary: string }> {
+  const resp = await fetch(`${API_BASE}/api/parse-filters`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!resp.ok) throw new Error(`Parse error: ${resp.status}`);
+  return resp.json();
+}
+
 export async function fetchListingDetail(url: string): Promise<ListingDetail> {
   const params = new URLSearchParams({ url });
   const resp = await fetch(`${API_BASE}/api/listing/detail?${params}`);
