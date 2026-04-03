@@ -1,12 +1,13 @@
 "use client";
 import { SearchFilters, SOURCE_LABELS, SOURCE_COLORS } from "@/lib/types";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface Props {
   filters: SearchFilters;
   onChange: (f: SearchFilters) => void;
+  onSourcesChange: (sources: string[]) => void;
   onSearch: () => void;
-  onPromptSearch: (prompt: string) => Promise<void>;
+  onPromptSearch: () => Promise<void>;
   prompt: string;
   onPromptChange: (p: string) => void;
   hasPolygon: boolean;
@@ -18,22 +19,30 @@ interface Props {
 }
 
 export default function FiltersBar({
-  filters, onChange, onSearch, onPromptSearch,
+  filters, onChange, onSourcesChange, onSearch, onPromptSearch,
   prompt, onPromptChange,
   hasPolygon, loading, availableSources, detectedLocation, parsedSummary,
 }: Props) {
-  const [parsing, setParsing] = useState(false);
   const [showSources, setShowSources] = useState(false);
+  const sourcesMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!showSources) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!sourcesMenuRef.current?.contains(event.target as Node)) {
+        setShowSources(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [showSources]);
 
   const handleSubmit = async () => {
     if (!hasPolygon) return;
     if (prompt.trim()) {
-      setParsing(true);
-      try {
-        await onPromptSearch(prompt.trim());
-      } finally {
-        setParsing(false);
-      }
+      await onPromptSearch();
     } else {
       onSearch();
     }
@@ -43,10 +52,10 @@ export default function FiltersBar({
     const next = filters.sources.includes(s)
       ? filters.sources.filter((x) => x !== s)
       : [...filters.sources, s];
-    if (next.length > 0) onChange({ ...filters, sources: next });
+    if (next.length > 0) onSourcesChange(next);
   };
 
-  const busy = loading || parsing;
+  const busy = loading;
 
   return (
     <div className="shrink-0 bg-surface-1 border-b border-border px-4 py-2.5 flex flex-col gap-2">
@@ -99,7 +108,7 @@ export default function FiltersBar({
 
         {/* Sources dropdown */}
         {availableSources.length > 0 && (
-          <div className="relative shrink-0">
+          <div ref={sourcesMenuRef} className="relative shrink-0">
             <button onClick={() => setShowSources(!showSources)} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-text-secondary hover:bg-surface-2 transition-all">
               <span className="text-text-muted">Sources</span>
               <span className="text-text-primary font-semibold">{filters.sources.length}/{availableSources.length}</span>
@@ -108,26 +117,23 @@ export default function FiltersBar({
               </svg>
             </button>
             {showSources && (
-              <>
-                <div className="fixed inset-0 z-[100]" onClick={() => setShowSources(false)} />
-                <div className="absolute top-full right-0 mt-1 bg-surface-2 border border-border rounded-xl shadow-card-hover p-2 z-[101] w-48">
-                  <div className="flex items-center justify-between px-2 py-1 mb-1">
-                    <span className="text-[10px] text-text-muted uppercase tracking-wider font-semibold">Sources</span>
-                    <button onClick={() => onChange({ ...filters, sources: filters.sources.length === availableSources.length ? [availableSources[0]] : [...availableSources] })} className="text-[10px] text-ramp-lime hover:text-ramp-lime-hover font-medium">
-                      {filters.sources.length === availableSources.length ? "Clear" : "All"}
-                    </button>
-                  </div>
-                  {availableSources.map((s) => {
-                    const active = filters.sources.includes(s);
-                    return (
-                      <button key={s} onClick={() => toggleSource(s)} className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-all ${active ? "text-text-primary" : "text-text-muted hover:text-text-secondary"}`}>
-                        <span className={`w-2 h-2 rounded-full transition-opacity ${active ? "opacity-100" : "opacity-30"}`} style={{ backgroundColor: SOURCE_COLORS[s] || "#6b7280" }} />
-                        <span className="font-medium">{SOURCE_LABELS[s] || s}</span>
-                      </button>
-                    );
-                  })}
+              <div className="absolute top-full right-0 mt-1 bg-surface-2 border border-border rounded-xl shadow-card-hover p-2 z-[101] w-48">
+                <div className="flex items-center justify-between px-2 py-1 mb-1">
+                  <span className="text-[10px] text-text-muted uppercase tracking-wider font-semibold">Sources</span>
+                  <button onClick={() => onSourcesChange(filters.sources.length === availableSources.length ? [availableSources[0]] : [...availableSources])} className="text-[10px] text-ramp-lime hover:text-ramp-lime-hover font-medium">
+                    {filters.sources.length === availableSources.length ? "Clear" : "All"}
+                  </button>
                 </div>
-              </>
+                {availableSources.map((s) => {
+                  const active = filters.sources.includes(s);
+                  return (
+                    <button key={s} onClick={() => toggleSource(s)} className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-all ${active ? "text-text-primary" : "text-text-muted hover:text-text-secondary"}`}>
+                      <span className={`w-2 h-2 rounded-full transition-opacity ${active ? "opacity-100" : "opacity-30"}`} style={{ backgroundColor: SOURCE_COLORS[s] || "#6b7280" }} />
+                      <span className="font-medium">{SOURCE_LABELS[s] || s}</span>
+                    </button>
+                  );
+                })}
+              </div>
             )}
           </div>
         )}
@@ -138,9 +144,7 @@ export default function FiltersBar({
           disabled={!hasPolygon || busy}
           className="btn-ramp flex items-center gap-2 !py-1.5 !px-5 !text-xs shrink-0"
         >
-          {parsing ? (
-            <><div className="w-3 h-3 rounded-full border-[1.5px] border-surface-0/30 border-t-surface-0 animate-spin" />Thinking...</>
-          ) : busy ? (
+          {busy ? (
             <><div className="w-3 h-3 rounded-full border-[1.5px] border-surface-0/30 border-t-surface-0 animate-spin" />Searching...</>
           ) : hasPolygon ? "Update" : "Draw area first"}
         </button>

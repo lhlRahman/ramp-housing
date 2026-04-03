@@ -22,11 +22,13 @@ DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "geocache
 
 # Geocoder (Photon — free, no rate limits, OSM-based)
 NOMINATIM_USER_AGENT = os.getenv("GEOCODER_USER_AGENT", "ramp-intern-housing/1.0 (hackathon project)")
+GEOCODER_CONCURRENCY = int(os.getenv("GEOCODER_CONCURRENCY", "6"))
 
 # Scraper defaults
 SCRAPER_TIMEOUT = int(os.getenv("SCRAPER_TIMEOUT", "40000"))  # ms for Playwright page loads
 SCRAPER_MAX_PAGES = int(os.getenv("SCRAPER_MAX_PAGES", "5"))
 BROWSER_HEADLESS = os.getenv("BROWSER_HEADLESS", "true").lower() == "true"
+ZUMPER_PAGE_CONCURRENCY = int(os.getenv("ZUMPER_PAGE_CONCURRENCY", "4"))
 USER_AGENT = os.getenv(
     "USER_AGENT",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",

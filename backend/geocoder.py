@@ -4,7 +4,7 @@ import time
 
 import httpx
 
-from config import NOMINATIM_USER_AGENT
+from config import GEOCODER_CONCURRENCY, NOMINATIM_USER_AGENT
 from db import get_cached_coords, cache_coords
 
 log = logging.getLogger(__name__)
@@ -15,6 +15,33 @@ PHOTON_REVERSE = "https://photon.komoot.io/reverse"
 _last_request = 0.0
 _lock = asyncio.Lock()
 _MIN_INTERVAL = 0.2  # Photon is more lenient, but be polite
+_client_lock = asyncio.Lock()
+_client: httpx.AsyncClient | None = None
+
+
+async def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is not None:
+        return _client
+
+    async with _client_lock:
+        if _client is None:
+            _client = httpx.AsyncClient(
+                timeout=10,
+                headers={"User-Agent": NOMINATIM_USER_AGENT},
+            )
+    return _client
+
+
+async def startup():
+    await _get_client()
+
+
+async def shutdown():
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
 
 
 async def _throttle():
@@ -38,25 +65,24 @@ async def geocode(address: str) -> tuple[float, float] | None:
     await _throttle()
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                PHOTON_API,
-                params={"q": address, "limit": 1},
-                headers={"User-Agent": NOMINATIM_USER_AGENT},
-            )
-            if resp.status_code != 200:
-                log.debug("Photon returned %d for '%s'", resp.status_code, address)
-                cache_coords(address, None, None)  # Cache failure — don't retry
-                return None
-            data = resp.json()
-            features = data.get("features", [])
-            if features:
-                coords = features[0]["geometry"]["coordinates"]  # [lng, lat]
-                lat, lng = coords[1], coords[0]
-                cache_coords(address, lat, lng)
-                return lat, lng
-            log.debug("No geocode result for '%s'", address)
+        client = await _get_client()
+        resp = await client.get(
+            PHOTON_API,
+            params={"q": address, "limit": 1},
+        )
+        if resp.status_code != 200:
+            log.debug("Photon returned %d for '%s'", resp.status_code, address)
             cache_coords(address, None, None)  # Cache failure — don't retry
+            return None
+        data = resp.json()
+        features = data.get("features", [])
+        if features:
+            coords = features[0]["geometry"]["coordinates"]  # [lng, lat]
+            lat, lng = coords[1], coords[0]
+            cache_coords(address, lat, lng)
+            return lat, lng
+        log.debug("No geocode result for '%s'", address)
+        cache_coords(address, None, None)  # Cache failure — don't retry
     except Exception as e:
         log.warning("Geocode failed for '%s': %s", address, e)
         # Don't cache network/timeout errors — they may be transient
@@ -71,25 +97,39 @@ async def reverse_geocode(lat: float, lng: float) -> dict | None:
     await _throttle()
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                "https://nominatim.openstreetmap.org/reverse",
-                params={"lat": lat, "lon": lng, "format": "json", "zoom": 10},
-                headers={"User-Agent": NOMINATIM_USER_AGENT},
-            )
-            if resp.status_code != 200:
-                log.warning("Nominatim reverse returned %d", resp.status_code)
-                return None
-            data = resp.json()
-            addr = data.get("address", {})
-            return {
-                "city": addr.get("city") or addr.get("town") or addr.get("municipality") or addr.get("village") or addr.get("county"),
-                "state": addr.get("state"),
-                "country": addr.get("country"),
-                "country_code": (addr.get("country_code") or "").lower(),
-                "display_name": data.get("display_name", ""),
-            }
+        client = await _get_client()
+        resp = await client.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={"lat": lat, "lon": lng, "format": "json", "zoom": 10},
+        )
+        if resp.status_code != 200:
+            log.warning("Nominatim reverse returned %d", resp.status_code)
+            return None
+        data = resp.json()
+        addr = data.get("address", {})
+        return {
+            "city": addr.get("city") or addr.get("town") or addr.get("municipality") or addr.get("village") or addr.get("county"),
+            "state": addr.get("state"),
+            "country": addr.get("country"),
+            "country_code": (addr.get("country_code") or "").lower(),
+            "display_name": data.get("display_name", ""),
+        }
     except Exception as e:
         log.warning("Reverse geocode failed for (%s, %s): %s", lat, lng, e)
 
     return None
+
+
+async def geocode_many(addresses: list[str], concurrency: int = GEOCODER_CONCURRENCY) -> dict[str, tuple[float, float] | None]:
+    if not addresses:
+        return {}
+
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+    results: dict[str, tuple[float, float] | None] = {}
+
+    async def _worker(address: str):
+        async with semaphore:
+            results[address] = await geocode(address)
+
+    await asyncio.gather(*[_worker(address) for address in addresses])
+    return results

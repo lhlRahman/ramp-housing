@@ -24,9 +24,24 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
   const onPolygonChangeRef = useRef(onPolygonChange);
   const [hasPolygon, setHasPolygon] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   // Keep ref current so initMap never needs onPolygonChange as a dependency
   useEffect(() => { onPolygonChangeRef.current = onPolygonChange; }, [onPolygonChange]);
+
+  useEffect(() => {
+    if (!showMenu) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [showMenu]);
 
   const drawPathOptions = {
     color: "#60a5fa",
@@ -51,7 +66,11 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
     // StrictMode runs cleanup+remount; Leaflet leaves _leaflet_id on the DOM so clear it
     delete (containerRef.current as any)._leaflet_id;
 
-    const map = L.map(containerRef.current).setView(center, zoom);
+    const map = L.map(containerRef.current, {
+      dragging: true,
+      zoomControl: true,
+      inertia: true,
+    }).setView(center, zoom);
     mapRef.current = map;
 
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -59,13 +78,8 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
       maxZoom: 19,
     }).addTo(map);
 
-    // Restrict to US bounds
-    const usBounds = L.latLngBounds(
-      L.latLng(24.396308, -125.0), // SW corner
-      L.latLng(49.384358, -66.93),  // NE corner
-    );
-    map.setMaxBounds(usBounds.pad(0.1));
     map.options.minZoom = 4;
+    map.dragging.enable();
 
     // Init geoman without toolbar
     (map as any).pm.addControls({
@@ -83,17 +97,22 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
       }
       polygonLayerRef.current = e.layer;
       e.layer.setStyle(drawPathOptions);
+      (map as any).pm.disableDraw();
+      map.dragging.enable();
 
       const latlngs = e.layer.getLatLngs()[0] as { lat: number; lng: number }[];
       const coords: [number, number][] = latlngs.map((ll) => [ll.lat, ll.lng]);
       onPolygonChangeRef.current(coords);
       setHasPolygon(true);
+      setIsDrawing(false);
     });
 
     map.on("pm:remove", () => {
       polygonLayerRef.current = null;
       onPolygonChangeRef.current(null);
       setHasPolygon(false);
+      setIsDrawing(false);
+      map.dragging.enable();
     });
 
     map.on("pm:edit", (e: any) => {
@@ -102,6 +121,11 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
       const latlngs = layer.getLatLngs()[0] as { lat: number; lng: number }[];
       const coords: [number, number][] = latlngs.map((ll) => [ll.lat, ll.lng]);
       onPolygonChangeRef.current(coords);
+    });
+
+    map.on("pm:drawend", () => {
+      setIsDrawing(false);
+      map.dragging.enable();
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -210,13 +234,36 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
     const map = mapRef.current;
     if (!map) return;
     setShowMenu(false);
+    setIsDrawing(true);
     onDrawStart?.();
 
     (map as any).pm.enableDraw(mode, {
       snappable: false,
       pathOptions: drawPathOptions,
+      continueDrawing: false,
     });
   };
+
+  const cancelDraw = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    (map as any).pm.disableDraw();
+    map.dragging.enable();
+    setIsDrawing(false);
+  }, []);
+
+  useEffect(() => {
+    if (!isDrawing) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        cancelDraw();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [cancelDraw, isDrawing]);
 
   const clearArea = () => {
     const map = mapRef.current;
@@ -225,13 +272,24 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
     polygonLayerRef.current = null;
     onPolygonChangeRef.current(null);
     setHasPolygon(false);
+    setIsDrawing(false);
   };
 
   return (
     <div ref={containerRef} className="flex-1 h-full relative">
       {/* Custom draw buttons */}
       <div className="absolute top-3 left-14 z-[1000] flex items-center gap-1.5">
-        {hasPolygon ? (
+        {isDrawing && !hasPolygon ? (
+          <button
+            onClick={cancelDraw}
+            className="bg-surface-2 border-2 border-amber-500/40 text-amber-300 hover:bg-surface-3 rounded-lg px-3 py-2 text-xs font-medium transition-all flex items-center gap-2 shadow-card"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            Cancel drawing
+          </button>
+        ) : hasPolygon ? (
           <button
             onClick={clearArea}
             className="bg-surface-2 border-2 border-ramp-lime/50 text-ramp-lime hover:bg-surface-3 rounded-lg px-3 py-2 text-xs font-medium transition-all flex items-center gap-2 shadow-card"
@@ -242,7 +300,7 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
             Clear area
           </button>
         ) : (
-          <div className="relative">
+          <div ref={menuRef} className="relative">
             <button
               onClick={() => setShowMenu(!showMenu)}
               className="bg-surface-2 border border-border hover:border-border-hover hover:bg-surface-3 text-text-primary rounded-lg px-3 py-2 text-xs font-medium transition-all flex items-center gap-2 shadow-card"
@@ -257,33 +315,38 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
             </button>
 
             {showMenu && (
-              <>
-                <div className="fixed inset-0 z-[99]" onClick={() => setShowMenu(false)} />
-                <div className="absolute top-full left-0 mt-1 bg-surface-2 border border-border rounded-xl shadow-card-hover p-1.5 z-[100] w-40">
-                  <button
-                    onClick={() => startDraw("Rectangle")}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-text-primary hover:bg-surface-3 transition-colors"
-                  >
-                    <svg className="w-4 h-4 text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <rect x="3" y="5" width="18" height="14" rx="1" />
-                    </svg>
-                    Rectangle
-                  </button>
-                  <button
-                    onClick={() => startDraw("Polygon")}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-text-primary hover:bg-surface-3 transition-colors"
-                  >
-                    <svg className="w-4 h-4 text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75l7.5-3.75 8.25 3.75-3.75 10.5H7.5z" />
-                    </svg>
-                    Polygon
-                  </button>
-                </div>
-              </>
+              <div className="absolute top-full left-0 mt-1 bg-surface-2 border border-border rounded-xl shadow-card-hover p-1.5 z-[100] w-40">
+                <button
+                  onClick={() => startDraw("Rectangle")}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-text-primary hover:bg-surface-3 transition-colors"
+                >
+                  <svg className="w-4 h-4 text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <rect x="3" y="5" width="18" height="14" rx="1" />
+                  </svg>
+                  Rectangle
+                </button>
+                <button
+                  onClick={() => startDraw("Polygon")}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-text-primary hover:bg-surface-3 transition-colors"
+                >
+                  <svg className="w-4 h-4 text-text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75l7.5-3.75 8.25 3.75-3.75 10.5H7.5z" />
+                  </svg>
+                  Polygon
+                </button>
+              </div>
             )}
           </div>
         )}
       </div>
+
+      {isDrawing && !hasPolygon && (
+        <div className="absolute top-16 left-14 z-[1000] pointer-events-none">
+          <div className="bg-surface-2/95 backdrop-blur border border-border rounded-lg px-3 py-2 text-[11px] text-text-secondary shadow-card">
+            Click to place points. Press Esc to cancel.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

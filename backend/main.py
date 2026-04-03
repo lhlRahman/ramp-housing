@@ -34,9 +34,11 @@ log = logging.getLogger("ramp")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
+    await geocoder.startup()
     asyncio.create_task(bg_scraper.refresh_session())
     log.info("Backend ready")
     yield
+    await geocoder.shutdown()
     await browser.shutdown()
 
 
@@ -57,16 +59,34 @@ app.add_middleware(
 
 
 async def geocode_listings(listings: list[Listing], geocode_suffix: str) -> list[Listing]:
+    pending_by_address: dict[str, list[Listing]] = {}
+
     for listing in listings:
-        if listing.lat is None or listing.lng is None:
-            addr = listing.address
-            if not addr:
-                continue  # Skip empty addresses — they always fail and can't be cached
-            if geocode_suffix and geocode_suffix.lower() not in addr.lower():
-                addr = addr + geocode_suffix
-            coords = await geocoder.geocode(addr)
-            if coords:
-                listing.lat, listing.lng = coords
+        if listing.lat is not None and listing.lng is not None:
+            continue
+
+        addr = listing.address
+        if not addr:
+            continue  # Skip empty addresses — they always fail and can't be cached
+        if geocode_suffix and geocode_suffix.lower() not in addr.lower():
+            addr = addr + geocode_suffix
+        pending_by_address.setdefault(addr, []).append(listing)
+
+    if not pending_by_address:
+        return listings
+
+    coords_by_address = await geocoder.geocode_many(
+        list(pending_by_address.keys()),
+        concurrency=config.GEOCODER_CONCURRENCY,
+    )
+
+    for address, matching_listings in pending_by_address.items():
+        coords = coords_by_address.get(address)
+        if not coords:
+            continue
+        for listing in matching_listings:
+            listing.lat, listing.lng = coords
+
     return listings
 
 

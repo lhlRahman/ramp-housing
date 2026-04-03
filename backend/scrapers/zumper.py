@@ -1,7 +1,9 @@
 import logging
+import asyncio
 
 import httpx
 
+from config import ZUMPER_PAGE_CONCURRENCY
 from models import Listing
 from utils import make_id
 
@@ -16,96 +18,117 @@ def _img_url(image_id: int) -> str:
     return f"{IMG_BASE}/{image_id}/1280x960"
 
 
+def _parse_items(
+    items: list[dict],
+    city_slug: str,
+    min_price: int,
+    max_price: int,
+    bedrooms: list[int],
+) -> list[Listing]:
+    listings: list[Listing] = []
+
+    for item in items:
+        price_min = item.get("min_price") or item.get("base_min_price") or 0
+        price_max = item.get("max_price") or item.get("base_max_price") or price_min
+
+        if not price_min and not price_max:
+            continue
+        if price_min and (price_min < min_price or price_min > max_price):
+            continue
+
+        beds_min = item.get("min_bedrooms", 1)
+        beds_max = item.get("max_bedrooms", beds_min)
+        if not any(b >= beds_min and b <= beds_max for b in bedrooms):
+            if beds_min != 0 or 0 not in bedrooms:
+                continue
+
+        lat = item.get("lat")
+        lng = item.get("lng")
+        address = item.get("address", "")
+        city = item.get("city", "")
+        state = item.get("state", "")
+        neighborhood = item.get("neighborhood_name") or ""
+
+        image_ids = item.get("image_ids", [])
+        photo_urls = [_img_url(img_id) for img_id in image_ids[:10]]
+
+        amenity_tags = item.get("amenity_tags") or []
+
+        url_path = item.get("pb_url", "")
+        pb_id = item.get("pb_id", "")
+        listing_url = f"https://www.zumper.com/apartment-buildings/p{pb_id}/{url_path}" if pb_id else f"https://www.zumper.com/apartments-for-rent/{city_slug}"
+
+        phone = item.get("phone")
+        date_available = item.get("date_available")
+
+        full_address = f"{address}, {city}, {state}" if address else f"{city}, {state}"
+
+        listings.append(Listing(
+            id=make_id("zumper", listing_url),
+            source="zumper",
+            title=item.get("building_name") or item.get("agent_name") or f"Zumper - {address}",
+            address=full_address,
+            neighborhood=neighborhood,
+            lat=float(lat) if lat else None,
+            lng=float(lng) if lng else None,
+            price_min=int(price_min),
+            price_max=int(price_max),
+            bedrooms=beds_min,
+            bathrooms=float(item.get("min_bathrooms") or 1.0),
+            furnished=False,
+            available_from=date_available,
+            available_to=None,
+            no_fee=item.get("leasing_fee") == 0,
+            url=listing_url,
+            photo_url=photo_urls[0] if photo_urls else None,
+            photos=photo_urls,
+            listing_type="apartment",
+            amenities=amenity_tags[:15],
+        ))
+
+    return listings
+
+
 async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms: list[int]) -> list[Listing]:
     if not city_slug:
         return []
 
-    listings: list[Listing] = []
-    offset = 0
-
     async with httpx.AsyncClient(timeout=20) as client:
-        while True:
+        async def _fetch_page(offset: int) -> dict | None:
             try:
                 resp = await client.post(API_URL, json={
                     "url": f"/apartments-for-rent/{city_slug}",
                     "limit": PAGE_SIZE,
                     "offset": offset,
                 })
-                data = resp.json()
+                return resp.json()
             except Exception as e:
                 log.warning("API error at offset %d: %s", offset, e)
-                break
+                return None
 
-            items = data.get("listables", [])
-            if not items:
-                break
+        first_page = await _fetch_page(0)
+        if not first_page:
+            return []
 
-            for item in items:
-                price_min = item.get("min_price") or item.get("base_min_price") or 0
-                price_max = item.get("max_price") or item.get("base_max_price") or price_min
+        listings = _parse_items(first_page.get("listables", []), city_slug, min_price, max_price, bedrooms)
+        total = first_page.get("matching", 0)
+        offsets = list(range(PAGE_SIZE, total, PAGE_SIZE))
 
-                if not price_min and not price_max:
-                    continue
-                if price_min and (price_min < min_price or price_min > max_price):
-                    continue
+        if not offsets:
+            log.info("%d listings", len(listings))
+            return listings
 
-                beds_min = item.get("min_bedrooms", 1)
-                beds_max = item.get("max_bedrooms", beds_min)
-                # Check if any of the listing's bedroom range overlaps with requested
-                if not any(b >= beds_min and b <= beds_max for b in bedrooms):
-                    # Also allow if beds_min is 0 (studio) and 0 is in bedrooms
-                    if beds_min != 0 or 0 not in bedrooms:
-                        continue
+        semaphore = asyncio.Semaphore(max(1, ZUMPER_PAGE_CONCURRENCY))
 
-                lat = item.get("lat")
-                lng = item.get("lng")
-                address = item.get("address", "")
-                city = item.get("city", "")
-                state = item.get("state", "")
-                neighborhood = item.get("neighborhood_name") or ""
+        async def _bounded_fetch(offset: int) -> dict | None:
+            async with semaphore:
+                return await _fetch_page(offset)
 
-                image_ids = item.get("image_ids", [])
-                photo_urls = [_img_url(img_id) for img_id in image_ids[:10]]
-
-                amenity_tags = item.get("amenity_tags") or []
-
-                url_path = item.get("pb_url", "")
-                pb_id = item.get("pb_id", "")
-                listing_url = f"https://www.zumper.com/apartment-buildings/p{pb_id}/{url_path}" if pb_id else f"https://www.zumper.com/apartments-for-rent/{city_slug}"
-
-                phone = item.get("phone")
-                date_available = item.get("date_available")
-
-                full_address = f"{address}, {city}, {state}" if address else f"{city}, {state}"
-
-                listings.append(Listing(
-                    id=make_id("zumper", listing_url),
-                    source="zumper",
-                    title=item.get("building_name") or item.get("agent_name") or f"Zumper - {address}",
-                    address=full_address,
-                    neighborhood=neighborhood,
-                    lat=float(lat) if lat else None,
-                    lng=float(lng) if lng else None,
-                    price_min=int(price_min),
-                    price_max=int(price_max),
-                    bedrooms=beds_min,
-                    bathrooms=float(item.get("min_bathrooms") or 1.0),
-                    furnished=False,
-                    available_from=date_available,
-                    available_to=None,
-                    no_fee=item.get("leasing_fee") == 0,
-                    url=listing_url,
-                    photo_url=photo_urls[0] if photo_urls else None,
-                    photos=photo_urls,
-                    listing_type="apartment",
-                    amenities=amenity_tags[:15],
-                ))
-
-            offset += PAGE_SIZE
-            total = data.get("matching", 0)
-
-            if offset >= total:
-                break
+        page_results = await asyncio.gather(*[_bounded_fetch(offset) for offset in offsets])
+        for page in page_results:
+            if not page:
+                continue
+            listings.extend(_parse_items(page.get("listables", []), city_slug, min_price, max_price, bedrooms))
 
     log.info("%d listings", len(listings))
     return listings

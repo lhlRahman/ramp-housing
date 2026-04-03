@@ -1,24 +1,15 @@
 "use client";
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
 import FiltersBar from "@/components/FiltersBar";
 import ListingCard from "@/components/ListingCard";
 import ListingDetail from "@/components/ListingDetail";
-import { Listing, SearchFilters, SortOption, SourceStatus, SOURCE_LABELS, SOURCE_COLORS } from "@/lib/types";
-import { searchListingsWS, parseFilters } from "@/lib/api";
+import { Listing, SortOption, SOURCE_LABELS, SOURCE_COLORS } from "@/lib/types";
+import { useSearchFilters } from "@/hooks/useSearchFilters";
+import { usePromptFilters } from "@/hooks/usePromptFilters";
+import { useHousingSearch } from "@/hooks/useHousingSearch";
 
 const Map = dynamic(() => import("@/components/Map"), { ssr: false });
-
-const DEFAULT_FILTERS: SearchFilters = {
-  checkIn: "2026-06-01",
-  checkOut: "2026-08-31",
-  minPrice: 0,
-  maxPrice: 50000,
-  bedrooms: [0, 1, 2, 3],
-  furnished: false,
-  noFee: false,
-  sources: [],  // empty = all available for detected city
-};
 
 function sortListings(listings: Listing[], sort: SortOption): Listing[] {
   const sorted = [...listings];
@@ -32,105 +23,72 @@ function sortListings(listings: Listing[], sort: SortOption): Listing[] {
 }
 
 export default function Home() {
-  const [filters, setFilters] = useState<SearchFilters>(DEFAULT_FILTERS);
   const [polygon, setPolygon] = useState<[number, number][] | null>(null);
-  const [listings, setListings] = useState<Listing[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailListing, setDetailListing] = useState<Listing | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [stats, setStats] = useState<Record<string, number> | null>(null);
   const [sort, setSort] = useState<SortOption>("price_asc");
   const [showEmptyState, setShowEmptyState] = useState(true);
-  const [sourceStatuses, setSourceStatuses] = useState<Record<string, SourceStatus>>({});
-  const wsCloseRef = useRef<(() => void) | null>(null);
-
-  // Auto-detected from search response
-  const [detectedLocation, setDetectedLocation] = useState<string | null>(null);
-  const [availableSources, setAvailableSources] = useState<string[]>([]);
-  const [noSourcesMessage, setNoSourcesMessage] = useState<string | null>(null);
-  const [parsedSummary, setParsedSummary] = useState<string | null>(null);
-  const [prompt, setPrompt] = useState("");
 
   // Map defaults — center of US, or browser geolocation
-  const [mapCenter, setMapCenter] = useState<[number, number]>([40.7128, -74.006]);
-  const [mapZoom, setMapZoom] = useState(12);
+  const mapCenter: [number, number] = [40.7128, -74.006];
+  const mapZoom = 12;
 
-  useEffect(() => {
-    navigator.geolocation?.getCurrentPosition(
-      (pos) => {
-        setMapCenter([pos.coords.latitude, pos.coords.longitude]);
-        setMapZoom(12);
-      },
-      () => {} // silently fail
-    );
-  }, []);
+  // Always default to NYC — ignore browser geolocation
+  const {
+    filters,
+    setFilters,
+    applyParsedFilters,
+    setManualSources,
+    detectedLocation,
+    availableSources,
+    noSourcesMessage,
+    handleSearchInit,
+    clearLocation,
+  } = useSearchFilters();
+  const {
+    prompt,
+    setPrompt,
+    parsedSummary,
+    parsing,
+    parsePromptToFilters,
+  } = usePromptFilters();
+  const {
+    listings,
+    loading,
+    error,
+    stats,
+    sourceStatuses,
+    runSearch,
+    resetResults,
+  } = useHousingSearch();
 
-  const doSearch = useCallback((poly: [number, number][], f: SearchFilters) => {
-    if (wsCloseRef.current) wsCloseRef.current();
-    setLoading(true);
-    setError(null);
-    setNoSourcesMessage(null);
-    setListings([]);
-    setStats(null);
-    setSourceStatuses({});
-
-    const close = searchListingsWS(poly, f, {
-      onInit: (detectedLocation, availableSources) => {
-        setDetectedLocation(detectedLocation);
-        setAvailableSources(availableSources);
-        if (availableSources.length > 0 && f.sources.length === 0) {
-          setFilters(prev => ({ ...prev, sources: availableSources }));
-        }
-      },
-      onListings: (newListings) => {
-        setListings(prev => [...prev, ...newListings]);
-      },
-      onSourceStatus: (source, status) => {
-        setSourceStatuses(prev => ({ ...prev, [source]: status }));
-      },
-      onDone: (stats) => {
-        setStats(stats);
-        setLoading(false);
-      },
-      onError: (message) => {
-        setError(message);
-        setLoading(false);
+  const doSearch = useCallback((poly: [number, number][], resolvedFilters = filters) => {
+    runSearch(poly, resolvedFilters, {
+      onInit: (locationName, sources) => {
+        handleSearchInit(locationName, sources);
       },
     });
-    wsCloseRef.current = close;
-  }, []);
+  }, [filters, handleSearchInit, runSearch]);
 
-  const handlePolygonChange = useCallback(async (poly: [number, number][] | null) => {
+  const handlePolygonChange = useCallback((poly: [number, number][] | null) => {
     setPolygon(poly);
     if (poly) {
-      setLoading(true);
-      if (prompt.trim()) {
-        const { filters: parsed } = await parseFilters(prompt.trim());
-        const newFilters = { ...filters, ...parsed, sources: filters.sources };
-        setFilters(newFilters);
-        doSearch(poly, newFilters);
-      } else {
-        doSearch(poly, filters);
-      }
+      doSearch(poly, filters);
     } else {
-      setListings([]); setStats(null);
-      setDetectedLocation(null); setAvailableSources([]);
-      setNoSourcesMessage(null);
+      resetResults();
+      clearLocation();
     }
-  }, [doSearch, filters, prompt]);
+  }, [clearLocation, doSearch, filters, resetResults]);
 
   const handleSearch = useCallback(() => {
     if (polygon) doSearch(polygon, filters);
   }, [polygon, filters, doSearch]);
 
-  const handlePromptSearch = useCallback(async (prompt: string) => {
-    const { filters: parsed, summary } = await parseFilters(prompt);
-    const newFilters = { ...filters, ...parsed, sources: filters.sources };
-    setFilters(newFilters);
-    setParsedSummary(summary || null);
-    if (polygon) doSearch(polygon, newFilters);
-  }, [filters, polygon, doSearch]);
+  const handlePromptSearch = useCallback(async () => {
+    const parsed = await parsePromptToFilters();
+    const nextFilters = applyParsedFilters(parsed);
+    if (polygon) doSearch(polygon, nextFilters);
+  }, [applyParsedFilters, doSearch, parsePromptToFilters, polygon]);
 
   const sorted = useMemo(() => sortListings(listings, sort), [listings, sort]);
   const sourceCounts = useMemo(() => listings.reduce<Record<string, number>>((acc, l) => {
@@ -143,12 +101,13 @@ export default function Home() {
       <FiltersBar
         filters={filters}
         onChange={setFilters}
+        onSourcesChange={setManualSources}
         onSearch={handleSearch}
         onPromptSearch={handlePromptSearch}
         prompt={prompt}
         onPromptChange={setPrompt}
         hasPolygon={!!polygon}
-        loading={loading}
+        loading={loading || parsing}
         availableSources={availableSources}
         detectedLocation={detectedLocation}
         noSourcesMessage={noSourcesMessage}
@@ -162,7 +121,7 @@ export default function Home() {
             selectedId={selectedId}
             center={mapCenter}
             zoom={mapZoom}
-            loading={loading}
+            loading={loading || parsing}
             onPolygonChange={handlePolygonChange}
             onSelectListing={(id) => setSelectedId(prev => prev === id ? null : id)}
             onDrawStart={() => setShowEmptyState(false)}
@@ -206,14 +165,14 @@ export default function Home() {
             </div>
           )}
 
-          {loading && Object.keys(sourceStatuses).length === 0 && (
+          {(loading || parsing) && Object.keys(sourceStatuses).length === 0 && (
             <div className="absolute inset-0 bg-surface-0/80 backdrop-blur-sm flex items-center justify-center z-[1000] pointer-events-none">
               <div className="bg-surface-2 border border-border rounded-2xl px-8 py-6 flex flex-col items-center shadow-card-hover">
                 <div className="relative w-10 h-10 mb-3">
                   <div className="absolute inset-0 rounded-full border-[3px] border-surface-4" />
                   <div className="absolute inset-0 rounded-full border-[3px] border-ramp-lime border-t-transparent animate-spin" />
                 </div>
-                <p className="text-sm font-semibold text-text-primary">Detecting location...</p>
+                <p className="text-sm font-semibold text-text-primary">{parsing ? "Parsing filters..." : "Detecting location..."}</p>
               </div>
             </div>
           )}
@@ -247,11 +206,11 @@ export default function Home() {
           )}
 
           {showEmptyState && !polygon && !loading && listings.length === 0 && !noSourcesMessage && (
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[999]">
-              <div className="bg-surface-2 border border-border rounded-2xl px-10 py-8 text-center max-w-sm shadow-card-hover relative">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[999] pointer-events-none">
+              <div className="bg-surface-2 border border-border rounded-2xl px-10 py-8 text-center max-w-sm shadow-card-hover relative pointer-events-none">
                 <button
                   onClick={() => setShowEmptyState(false)}
-                  className="absolute top-2.5 right-2.5 w-6 h-6 rounded-full bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text-primary flex items-center justify-center transition-colors"
+                  className="absolute top-2.5 right-2.5 w-6 h-6 rounded-full bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text-primary flex items-center justify-center transition-colors pointer-events-auto"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -265,7 +224,7 @@ export default function Home() {
                 </div>
                 <h3 className="font-semibold text-text-primary text-base mb-1">Search anywhere</h3>
                 <p className="text-sm text-text-secondary leading-relaxed">
-                  Zoom into any city and draw an area to find housing.
+                  Drag the map to move around, then draw an area to search.
                 </p>
               </div>
             </div>
