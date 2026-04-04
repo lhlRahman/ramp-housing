@@ -1,4 +1,4 @@
-import { Listing, SearchFilters, SearchResult, ListingDetail, SourceStatus } from "./types";
+import { Listing, SearchFilters, SearchResult, ListingDetail, SourceStatus, RenterProfile, OutreachItem } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const WS_BASE = API_BASE.replace(/^http/, "ws");
@@ -32,8 +32,10 @@ export function searchListingsWS(
     }));
   };
 
+  let done = false;
   ws.onmessage = (evt) => {
-    const msg = JSON.parse(evt.data);
+    let msg: any;
+    try { msg = JSON.parse(evt.data); } catch { return; }
     if (msg.type === "init") {
       callbacks.onInit(msg.detected_location, msg.available_sources);
     } else if (msg.type === "listings") {
@@ -41,13 +43,16 @@ export function searchListingsWS(
     } else if (msg.type === "source_status") {
       callbacks.onSourceStatus(msg.source, { status: msg.status, count: msg.count, cached: msg.cached });
     } else if (msg.type === "done") {
+      done = true;
       callbacks.onDone(msg.stats);
     } else if (msg.type === "error") {
+      done = true;
       callbacks.onError(msg.message);
     }
   };
 
-  ws.onerror = () => callbacks.onError("WebSocket connection failed");
+  ws.onerror = () => { done = true; callbacks.onError("WebSocket connection failed"); };
+  ws.onclose = () => { if (!done) callbacks.onError("Connection closed unexpectedly"); };
 
   return () => ws.close();
 }
@@ -66,5 +71,57 @@ export async function fetchListingDetail(url: string): Promise<ListingDetail> {
   const params = new URLSearchParams({ url });
   const resp = await fetch(`${API_BASE}/api/listing/detail?${params}`);
   if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+  return resp.json();
+}
+
+// ── Renter Profile ──────────────────────────────────────────────
+
+export async function upsertRenterProfile(profile: Partial<RenterProfile> & { phone: string }): Promise<RenterProfile> {
+  const resp = await fetch(`${API_BASE}/api/renter/profile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(profile),
+  });
+  if (!resp.ok) throw new Error(`Profile error: ${resp.status}`);
+  const data = await resp.json();
+  return data.profile;
+}
+
+export async function getRenterProfile(phone: string): Promise<RenterProfile | null> {
+  const resp = await fetch(`${API_BASE}/api/renter/profile/${encodeURIComponent(phone)}`);
+  if (resp.status === 404) return null;
+  if (!resp.ok) throw new Error(`Profile error: ${resp.status}`);
+  return resp.json();
+}
+
+// ── Outreach ────────────────────────────────────────────────────
+
+export interface StartOutreachParams {
+  renter_phone: string;
+  listings: { listing_id: string; listing: Record<string, any>; landlord_phone?: string | null }[];
+  channel: "call" | "text";
+  custom_message?: string;
+}
+
+export async function startOutreach(params: StartOutreachParams): Promise<OutreachItem[]> {
+  const resp = await fetch(`${API_BASE}/api/outreach/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!resp.ok) throw new Error(`Outreach error: ${resp.status}`);
+  const data = await resp.json();
+  return data.outreach;
+}
+
+export async function getOutreachDashboard(phone: string): Promise<{ count: number; outreach: OutreachItem[] }> {
+  const resp = await fetch(`${API_BASE}/api/outreach/dashboard/${encodeURIComponent(phone)}`);
+  if (!resp.ok) throw new Error(`Dashboard error: ${resp.status}`);
+  return resp.json();
+}
+
+export async function getOutreachDetail(outreachId: string): Promise<OutreachItem & { events: any[] }> {
+  const resp = await fetch(`${API_BASE}/api/outreach/${encodeURIComponent(outreachId)}`);
+  if (!resp.ok) throw new Error(`Outreach error: ${resp.status}`);
   return resp.json();
 }

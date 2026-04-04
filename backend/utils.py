@@ -9,7 +9,8 @@ def make_id(source: str, url: str) -> str:
 
 def point_in_polygon(lat: float, lng: float, polygon: list[list[float]]) -> bool:
     """polygon is list of [lat, lng] pairs."""
-    # Shapely uses (x=lng, y=lat)
+    if len(polygon) < 3:
+        return False
     pt = Point(lng, lat)
     poly = Polygon([(p[1], p[0]) for p in polygon])
     return poly.contains(pt)
@@ -39,6 +40,10 @@ def deduplicate(listings: list[Listing]) -> list[Listing]:
 
 def polygon_centroid(polygon: list[list[float]]) -> tuple[float, float]:
     """Compute centroid of polygon. polygon is list of [lat, lng] pairs. Returns (lat, lng)."""
+    if len(polygon) < 3:
+        if polygon:
+            return (polygon[0][0], polygon[0][1])
+        return (0.0, 0.0)
     poly = Polygon([(p[1], p[0]) for p in polygon])
     centroid = poly.centroid
     return centroid.y, centroid.x
@@ -46,6 +51,8 @@ def polygon_centroid(polygon: list[list[float]]) -> tuple[float, float]:
 
 def bounding_box(polygon: list[list[float]]) -> tuple[float, float, float, float]:
     """Returns (min_lat, min_lng, max_lat, max_lng)."""
+    if not polygon:
+        return (0.0, 0.0, 0.0, 0.0)
     lats = [p[0] for p in polygon]
     lngs = [p[1] for p in polygon]
     return min(lats), min(lngs), max(lats), max(lngs)

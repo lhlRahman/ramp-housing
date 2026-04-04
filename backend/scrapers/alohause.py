@@ -10,7 +10,7 @@ from utils import make_id
 log = logging.getLogger(__name__)
 
 FIND_ROOM_URL = "https://www.alohause.com/find-room"
-AVAIL_API = "https://portal-stage.alohause.com/Alohause/getRtAvailability.php"
+AVAIL_API = "https://portal.alohause.com/Alohause/getRtAvailability.php"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
@@ -79,7 +79,10 @@ async def scrape(check_in: str | None, check_out: str | None, min_price: int, ma
                 lng = None
             city = city_el.get_text(strip=True) if city_el else "Manhattan"
             neighborhood = neighborhood_el.get_text(strip=True) if neighborhood_el else "New York"
-            baths = float(baths_el.get_text(strip=True)) if baths_el and baths_el.get_text(strip=True) else 1.0
+            try:
+                baths = float(baths_el.get_text(strip=True)) if baths_el and baths_el.get_text(strip=True) else 1.0
+            except (ValueError, TypeError):
+                baths = 1.0
 
             content_el = card.select_one(".list-item-content")
             title_parts = []

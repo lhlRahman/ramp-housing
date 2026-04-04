@@ -37,5 +37,21 @@ USER_AGENT = os.getenv(
 # xAI / Grok
 XAI_API_KEY = os.getenv("XAI_API_KEY", "")
 
+# Retell
+RETELL_API_KEY = os.getenv("RETELL_API_KEY", "")
+RETELL_API_BASE = os.getenv("RETELL_API_BASE", "https://api.retellai.com").rstrip("/")
+RETELL_DEFAULT_VOICE_AGENT_ID = os.getenv("RETELL_DEFAULT_VOICE_AGENT_ID", "")
+RETELL_DEFAULT_CHAT_AGENT_ID = os.getenv("RETELL_DEFAULT_CHAT_AGENT_ID", "")
+RETELL_DEFAULT_FROM_NUMBER = os.getenv("RETELL_DEFAULT_FROM_NUMBER", "")
+
+# Twilio (direct SMS — bypasses Retell SMS which needs A2P on their side)
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_FROM_NUMBER = os.getenv("TWILIO_FROM_NUMBER", "")
+
+# Internal escalation notifications
+INTERNAL_ESCALATION_WEBHOOK_URL = os.getenv("INTERNAL_ESCALATION_WEBHOOK_URL", "")
+INTERNAL_ESCALATION_WEBHOOK_BEARER_TOKEN = os.getenv("INTERNAL_ESCALATION_WEBHOOK_BEARER_TOKEN", "")
+
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()

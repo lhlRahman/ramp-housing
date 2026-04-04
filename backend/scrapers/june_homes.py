@@ -43,7 +43,8 @@ async def scrape(city_slug: str | None, check_in: str | None, min_price: int, ma
 
             new_this_page = 0
             for item in items:
-                if 1 not in bedrooms:
+                beds = int(item.get("bedrooms") or item.get("bedroomsCount") or 1)
+                if beds not in bedrooms:
                     continue
 
                 price = float(item.get("price") or 0)
@@ -88,8 +89,8 @@ async def scrape(city_slug: str | None, check_in: str | None, min_price: int, ma
                     neighborhood=area.get("title") or city_obj.get("name") or "",
                     price_min=int(price),
                     price_max=int(price),
-                    bedrooms=1,
-                    bathrooms=1.0,
+                    bedrooms=beds,
+                    bathrooms=float(item.get("bathrooms") or item.get("bathroomsCount") or 1),
                     furnished=str(item.get("furnishingStatus") or "").lower() == "furnished",
                     available_from=item.get("availableFrom"),
                     available_to=None,

@@ -68,16 +68,17 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
     pages_scraped = 0
     consecutive_timeouts = 0
 
+    from config import SCRAPER_MAX_PAGES, USER_AGENT
     br = await shared_browser._ensure_browser()
 
     try:
         pg = 0
-        while True:
+        while pg < SCRAPER_MAX_PAGES:
             pg += 1
             page_url = url if pg == 1 else url + f"&page={pg}"
 
             ctx = await br.new_context(
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+                user_agent=USER_AGENT,
                 viewport={"width": 1280, "height": 900},
             )
             page = await ctx.new_page()

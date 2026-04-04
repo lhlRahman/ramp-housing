@@ -201,14 +201,15 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
           iconAnchor: [20, 30],
         });
 
+        const esc = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
         const price = `$${listing.price_min.toLocaleString()}/mo`;
         const beds = listing.bedrooms === 0 ? "Studio" : `${listing.bedrooms} BR`;
         const marker = L.marker([listing.lat, listing.lng], { icon })
           .addTo(map)
           .bindPopup(
             `<div style="font-family:Inter,system-ui,sans-serif;min-width:180px">` +
-            `<div style="font-weight:600;font-size:13px;margin-bottom:2px">${listing.title}</div>` +
-            `<div style="color:#6b7280;font-size:12px;margin-bottom:4px">${listing.address}</div>` +
+            `<div style="font-weight:600;font-size:13px;margin-bottom:2px">${esc(listing.title)}</div>` +
+            `<div style="color:#6b7280;font-size:12px;margin-bottom:4px">${esc(listing.address || "")}</div>` +
             `<div style="font-weight:700;font-size:14px">${price}</div>` +
             `<div style="color:#6b7280;font-size:12px">${beds} · ${listing.bathrooms} BA</div>` +
             `</div>`

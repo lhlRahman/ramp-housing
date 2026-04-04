@@ -1,24 +1,56 @@
 import asyncio
+import base64
 import datetime
 import hashlib
+import hmac
 import json
 import logging
 import re
+import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 
 import browser
 import config
 import db
 from db import get_cached_scrape, cache_scrape
+from db import answer_retell_escalation, get_retell_conversation, get_retell_escalation
+from db import list_retell_conversations, list_retell_escalations
+from db import (
+    upsert_renter_profile,
+    get_renter_profile,
+    create_outreach,
+    get_outreach,
+    list_outreach_for_renter,
+    update_outreach,
+    add_outreach_event,
+    list_outreach_events,
+    batch_list_outreach_events,
+)
 import geocoder
 from cities import resolve_location
 from models import Listing
+from retell_integration import (
+    RetellClient,
+    RetellEscalationReplyRequest,
+    RetellEscalationRequest,
+    RetellFunctionEnvelope,
+    RetellOutboundCallRequest,
+    RetellOutboundSMSRequest,
+    RetellSearchRequest,
+    check_escalation,
+    create_escalation,
+    persist_retell_event,
+    search_city_listings,
+    unwrap_function_args,
+)
 from utils import deduplicate, point_in_polygon, polygon_centroid
 from scrapers import blueground as bg_scraper
 from scrapers import june_homes, alohause, furnished_finder, leasebreak, renthop, zumper, craigslist
@@ -31,13 +63,113 @@ logging.basicConfig(
 log = logging.getLogger("ramp")
 
 
+FOLLOWUP_INTERVAL = 60 * 60  # check every hour
+FOLLOWUP_AFTER_SECS = 24 * 60 * 60  # nudge after 24h silence
+GHOST_AFTER_SECS = 72 * 60 * 60  # mark ghosted after 72h silence
+MAX_FOLLOWUPS = 2  # max nudge messages per outreach
+
+# Per-outreach locks to prevent race conditions when multiple SMS arrive simultaneously
+_outreach_locks: dict[str, asyncio.Lock] = {}
+
+
+async def _sms_followup_loop():
+    """Background loop: send follow-ups for stale SMS outreach, mark ghosted ones."""
+    await asyncio.sleep(30)  # let server finish startup
+    while True:
+        try:
+            now = int(time.time())
+            conn = db.get_conn()
+            try:
+                # Find SMS outreach that's been "contacted" or "responded" for a while
+                rows = conn.execute(
+                    """SELECT outreach_id, renter_phone, landlord_phone, status, updated_at, listing_json
+                       FROM outreach
+                       WHERE channel='text' AND status IN ('contacted', 'responded')
+                       AND updated_at < ?
+                       ORDER BY updated_at ASC LIMIT 20""",
+                    (now - FOLLOWUP_AFTER_SECS,),
+                ).fetchall()
+            finally:
+                conn.close()
+
+            for row in rows:
+                oid = row["outreach_id"]
+                age = now - row["updated_at"]
+                events = list_outreach_events(oid)
+                followup_count = sum(1 for e in events if e["event_type"] == "followup_sent")
+
+                # If no reply after 72h and we've already followed up, mark ghosted
+                if age > GHOST_AFTER_SECS and followup_count >= MAX_FOLLOWUPS:
+                    update_outreach(oid, status="ghosted")
+                    add_outreach_event(oid, "auto_ghosted", f"No reply after {age // 3600}h and {followup_count} follow-ups")
+                    listing = json.loads(row["listing_json"])
+                    asyncio.create_task(_notify_renter(row["renter_phone"], oid, "ghosted", listing))
+                    log.info("Marked outreach %s as ghosted", oid)
+                    continue
+
+                # Send a follow-up nudge if under the cap
+                if followup_count < MAX_FOLLOWUPS:
+                    try:
+                        listing = json.loads(row["listing_json"])
+                        profile = get_renter_profile(row["renter_phone"])
+                        renter_name = profile.get("name", "the renter") if profile else "the renter"
+
+                        followup_prompt = (
+                            f"Write a brief, polite follow-up SMS (under 200 chars) for a renter's assistant.\n"
+                            f"We reached out about {listing.get('title', 'a listing')} at {listing.get('address', '')} "
+                            f"on behalf of {renter_name} but haven't heard back in {age // 3600} hours.\n"
+                            f"This is follow-up #{followup_count + 1}. Keep it short and friendly. Don't be pushy."
+                        )
+                        async with httpx.AsyncClient() as http:
+                            resp = await http.post(
+                                "https://api.x.ai/v1/chat/completions",
+                                headers={"Authorization": f"Bearer {config.XAI_API_KEY}", "Content-Type": "application/json"},
+                                json={"model": "grok-3", "messages": [{"role": "user", "content": followup_prompt}], "max_tokens": 150},
+                                timeout=10,
+                            )
+                            resp.raise_for_status()
+                            followup_text = resp.json()["choices"][0]["message"]["content"].strip()
+
+                        await _send_twilio_sms(row["landlord_phone"], followup_text)
+                        add_outreach_event(oid, "followup_sent", json.dumps({"body": followup_text, "followup_num": followup_count + 1}))
+                        update_outreach(oid, status=row["status"])  # touch updated_at
+                        log.info("Sent follow-up #%d for outreach %s", followup_count + 1, oid)
+                    except Exception as exc:
+                        log.error("Follow-up failed for %s: %s", oid, exc)
+
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            log.error("Follow-up loop error: %s", exc)
+
+        await asyncio.sleep(FOLLOWUP_INTERVAL)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
+    # Seed test renter profile so we can test calls immediately
+    upsert_renter_profile(
+        phone="16477732191",
+        name="Habib (Test)",
+        current_city="New York, NY",
+        move_in_date="2026-06-01",
+        budget_max=3000,
+        income_range="$80k-100k",
+        credit_score_range="700-750",
+        pets="none",
+        smoker=False,
+        guarantor=True,
+        dealbreakers="No basement apartments",
+        free_text_context="I'm a software engineer looking for a quiet place to work from home. Flexible on move-in if the place is right.",
+    )
+    log.info("Seeded test renter profile for +16477732191")
     await geocoder.startup()
     asyncio.create_task(bg_scraper.refresh_session())
+    followup_task = asyncio.create_task(_sms_followup_loop())
     log.info("Backend ready")
     yield
+    followup_task.cancel()
     await geocoder.shutdown()
     await browser.shutdown()
 
@@ -462,7 +594,7 @@ Today is {today}. Interpret relative dates (e.g. "this summer", "next month") ac
             "https://api.x.ai/v1/chat/completions",
             headers={"Authorization": f"Bearer {config.XAI_API_KEY}"},
             json={
-                "model": "grok-3-mini",
+                "model": "grok-3",
                 "max_tokens": 300,
                 "messages": [
                     {"role": "system", "content": system},
@@ -489,3 +621,735 @@ Today is {today}. Interpret relative dates (e.g. "this summer", "next month") ac
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.post("/api/retell/tools/search-listings")
+async def retell_search_listings(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    args, _ = unwrap_function_args(payload)
+    body = RetellSearchRequest.model_validate(args)
+    return await search_city_listings(body)
+
+
+@app.post("/api/retell/tools/escalate-to-human")
+async def retell_escalate_to_human(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    args, context = unwrap_function_args(payload)
+    if context:
+        args.setdefault("conversation_id", context.get("call_id") or context.get("chat_id"))
+        args.setdefault("renter_phone", context.get("from_number") or context.get("to_number"))
+    body = RetellEscalationRequest.model_validate(args)
+    return await create_escalation(body)
+
+
+@app.get("/api/retell/tools/check-escalation/{escalation_id}")
+async def retell_check_escalation(escalation_id: str) -> dict[str, Any]:
+    return check_escalation(escalation_id)
+
+
+@app.post("/api/retell/webhook")
+async def retell_webhook(request: Request) -> dict[str, Any]:
+    payload = await request.json()
+    fields = persist_retell_event(payload)
+
+    # If this call/chat is tied to an outreach, update the outreach record
+    event_type = payload.get("event") or payload.get("event_type")
+    detail = payload.get("call") if isinstance(payload.get("call"), dict) else payload.get("chat")
+    source = detail if isinstance(detail, dict) else payload
+    metadata = source.get("metadata") or {}
+    outreach_id = metadata.get("outreach_id")
+
+    if outreach_id:
+        call_status = source.get("call_status") or source.get("chat_status") or ""
+        transcript = source.get("transcript") or ""
+        analysis = source.get("call_analysis") or {}
+        summary = analysis.get("call_summary") or ""
+        recording = source.get("recording_url") or ""
+
+        if event_type in ("call_ended", "chat_ended"):
+            outreach_status = "responded" if analysis.get("call_successful") else "contacted"
+            update_outreach(outreach_id, status=outreach_status, summary=summary)
+            add_outreach_event(outreach_id, "call_ended", json.dumps({
+                "transcript": transcript[:5000],
+                "summary": summary,
+                "sentiment": analysis.get("user_sentiment"),
+                "recording_url": recording,
+                "duration_ms": source.get("duration_ms"),
+                "successful": analysis.get("call_successful"),
+            }))
+            log.info("Outreach %s updated from webhook: %s", outreach_id, outreach_status)
+        elif event_type in ("call_started", "chat_started"):
+            update_outreach(outreach_id, status="contacted")
+            add_outreach_event(outreach_id, "call_started")
+
+    return {
+        "ok": True,
+        "conversation_id": fields["conversation_id"],
+        "channel": fields["channel"],
+    }
+
+
+@app.get("/api/retell/admin/conversations")
+async def retell_list_conversations(limit: int = Query(50, ge=1, le=200)) -> dict[str, Any]:
+    return {"conversations": list_retell_conversations(limit=limit)}
+
+
+@app.get("/api/retell/admin/conversations/{conversation_id}")
+async def retell_get_conversation(conversation_id: str) -> dict[str, Any]:
+    record = get_retell_conversation(conversation_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return record
+
+
+@app.get("/api/retell/admin/escalations")
+async def retell_list_escalations(
+    status: str | None = Query(None, pattern="^(pending|answered)$"),
+    limit: int = Query(100, ge=1, le=500),
+) -> dict[str, Any]:
+    return {"escalations": list_retell_escalations(status=status, limit=limit)}
+
+
+@app.get("/api/retell/admin/escalations/{escalation_id}")
+async def retell_get_escalation(escalation_id: str) -> dict[str, Any]:
+    record = get_retell_escalation(escalation_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Escalation not found")
+    return record
+
+
+@app.post("/api/retell/admin/escalations/{escalation_id}/reply")
+async def retell_reply_escalation(escalation_id: str, body: RetellEscalationReplyRequest) -> dict[str, Any]:
+    if not answer_retell_escalation(escalation_id, body.answer.strip()):
+        raise HTTPException(status_code=404, detail="Escalation not found")
+    return {
+        "ok": True,
+        "escalation_id": escalation_id,
+        "status": "answered",
+    }
+
+
+@app.post("/api/retell/actions/outbound-sms")
+async def retell_outbound_sms(body: RetellOutboundSMSRequest) -> dict[str, Any]:
+    client = RetellClient()
+    return await client.create_sms_chat(body)
+
+
+@app.post("/api/retell/actions/outbound-call")
+async def retell_outbound_call(body: RetellOutboundCallRequest) -> dict[str, Any]:
+    client = RetellClient()
+    return await client.create_phone_call(body)
+
+
+# ── Renter Profile ──────────────────────────────────────────────────────
+
+
+_PHONE_RE = re.compile(r"^\+?1?\d{10,15}$")
+VALID_OUTREACH_STATUSES = {
+    "pending", "contacted", "responded", "touring",
+    "ghosted", "rejected", "scam_flagged", "no_phone", "error",
+}
+
+
+class RenterProfileRequest(BaseModel):
+    phone: str = Field(min_length=10, max_length=20)
+    name: str | None = Field(default=None, max_length=200)
+    current_city: str | None = Field(default=None, max_length=200)
+    move_in_date: str | None = Field(default=None, max_length=20)
+    budget_max: int | None = Field(default=None, ge=0, le=100_000)
+    income_range: str | None = Field(default=None, max_length=100)
+    credit_score_range: str | None = Field(default=None, max_length=50)
+    pets: str | None = Field(default=None, max_length=200)
+    smoker: bool = False
+    guarantor: bool = False
+    dealbreakers: str | None = Field(default=None, max_length=1000)
+    free_text_context: str | None = Field(default=None, max_length=2000)
+
+
+@app.post("/api/renter/profile")
+async def api_upsert_renter_profile(body: RenterProfileRequest) -> dict[str, Any]:
+    cleaned_phone = body.phone.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    if not _PHONE_RE.match(cleaned_phone):
+        raise HTTPException(status_code=400, detail="Invalid phone number format")
+    profile = upsert_renter_profile(
+        phone=cleaned_phone,
+        name=body.name,
+        current_city=body.current_city,
+        move_in_date=body.move_in_date,
+        budget_max=body.budget_max,
+        income_range=body.income_range,
+        credit_score_range=body.credit_score_range,
+        pets=body.pets,
+        smoker=body.smoker,
+        guarantor=body.guarantor,
+        dealbreakers=body.dealbreakers,
+        free_text_context=body.free_text_context,
+    )
+    return {"ok": True, "profile": profile}
+
+
+@app.get("/api/renter/profile/{phone}")
+async def api_get_renter_profile(phone: str) -> dict[str, Any]:
+    profile = get_renter_profile(phone)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return profile
+
+
+# ── Outreach ─────────────────────────────────────────────────────────────
+
+
+class OutreachListingItem(BaseModel):
+    listing_id: str = Field(max_length=200)
+    listing: dict[str, Any]
+    landlord_phone: str | None = Field(default=None, max_length=20)
+
+
+class StartOutreachRequest(BaseModel):
+    renter_phone: str = Field(min_length=10, max_length=20)
+    listings: list[OutreachListingItem] = Field(min_length=1, max_length=25)
+    channel: str = Field(pattern="^(call|text)$")
+    custom_message: str | None = Field(default=None, max_length=2000)
+
+
+async def _send_twilio_sms(to_number: str, body: str, http: httpx.AsyncClient | None = None) -> dict[str, Any]:
+    """Send an SMS via Twilio REST API. Pass an existing client to reuse connections."""
+    sid = config.TWILIO_ACCOUNT_SID
+    token = config.TWILIO_AUTH_TOKEN
+    from_num = config.TWILIO_FROM_NUMBER or config.RETELL_DEFAULT_FROM_NUMBER
+    if not sid or not token or not from_num:
+        raise RuntimeError("Twilio credentials not configured")
+    # Ensure E.164 format
+    if not to_number.startswith("+"):
+        to_number = f"+{to_number}" if to_number.startswith("1") else f"+1{to_number}"
+    if not from_num.startswith("+"):
+        from_num = f"+{from_num}" if from_num.startswith("1") else f"+1{from_num}"
+    auth = base64.b64encode(f"{sid}:{token}".encode()).decode()
+
+    async def _do_send(client: httpx.AsyncClient) -> dict[str, Any]:
+        resp = await client.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
+            headers={"Authorization": f"Basic {auth}"},
+            data={"To": to_number, "From": from_num, "Body": body},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    if http:
+        return await _do_send(http)
+    async with httpx.AsyncClient() as client:
+        return await _do_send(client)
+
+
+async def _send_sms_parts(to_number: str, parts: list[str], delay: float = 1.5) -> list[dict]:
+    """Send multiple SMS parts with a realistic delay, reusing one HTTP connection."""
+    results = []
+    async with httpx.AsyncClient() as http:
+        for i, part in enumerate(parts):
+            if i > 0:
+                await asyncio.sleep(delay)
+            results.append(await _send_twilio_sms(to_number, part, http=http))
+    return results
+
+
+async def _notify_renter(renter_phone: str, outreach_id: str, event: str, listing: dict, detail: str = ""):
+    """Send an update notification to the renter about their outreach."""
+    title = listing.get("title", "a listing")
+    addr = listing.get("address", "")
+    loc = f" at {addr}" if addr else ""
+
+    messages = {
+        "responded": [
+            f"Update on {title}{loc}:",
+            f"The landlord responded! {detail}" if detail else "The landlord just responded to your inquiry.",
+            "We're continuing the conversation on your behalf. Check your dashboard for details."
+        ],
+        "touring": [
+            f"Great news about {title}{loc}!",
+            f"The landlord is open to showing the place. {detail}" if detail else "The landlord is open to showing the place!",
+            "When are you free for a tour? Reply with your availability and we'll coordinate with the landlord."
+        ],
+        "scam_flagged": [
+            f"Heads up about {title}{loc}:",
+            f"We detected some red flags in this listing. {detail}" if detail else "This listing showed some scam warning signs.",
+            "We've stopped the conversation. You may want to avoid this one."
+        ],
+        "ghosted": [
+            f"Update on {title}{loc}:",
+            "The landlord hasn't responded after multiple follow-ups. We've moved this to ghosted.",
+            "You might want to try other listings."
+        ],
+        "rejected": [
+            f"Update on {title}{loc}:",
+            f"Unfortunately the landlord isn't moving forward. {detail}" if detail else "The landlord declined or the listing is no longer available.",
+        ],
+    }
+
+    parts = messages.get(event)
+    if not parts:
+        return
+
+    try:
+        await _send_sms_parts(renter_phone, parts)
+        add_outreach_event(outreach_id, "renter_notified", json.dumps({"event": event, "parts": len(parts)}))
+        log.info("Notified renter %s about %s for outreach %s", renter_phone, event, outreach_id)
+    except Exception as exc:
+        log.error("Failed to notify renter %s: %s", renter_phone, exc)
+
+
+async def _build_sms_parts(dyn_vars: dict[str, str]) -> list[str]:
+    """Use Grok to generate natural multi-part SMS messages for landlord outreach."""
+    custom = dyn_vars.get("custom_message", "").strip()
+    pets = dyn_vars.get("renter_pets", "none")
+    dealbreakers = dyn_vars.get("renter_dealbreakers", "")
+    move_in = dyn_vars.get("renter_move_in", "flexible")
+
+    prompt = (
+        f"You're texting a landlord on behalf of a renter. Write 2-3 SHORT separate text messages (like how real people text — not one big paragraph).\n\n"
+        f"Listing: {dyn_vars.get('listing_title', '')} at {dyn_vars.get('listing_address', '')}, ${dyn_vars.get('listing_price', '?')}/mo\n"
+        f"Renter: {dyn_vars.get('renter_name', 'a renter')}\n"
+        f"Move-in: {move_in}\n"
+        f"Budget: ${dyn_vars.get('renter_budget', 'flexible')}/mo\n"
+    )
+    if pets and pets.lower() != "none":
+        prompt += f"Pets: {pets}\n"
+    if dealbreakers:
+        prompt += f"Dealbreakers: {dealbreakers}\n"
+    if custom:
+        prompt += f"Renter specifically wants to ask: {custom}\n"
+
+    prompt += (
+        f"\nRules:\n"
+        f"- First message: brief intro + ask if available\n"
+        f"- Second message: mention move-in timing and any key questions (pets, specific concerns)\n"
+        f"- Optional third message ONLY if renter has custom questions\n"
+        f"- Each message under 160 chars (single SMS segment)\n"
+        f"- Casual, natural tone — like a real person texting\n"
+        f"- No emojis, no 'I hope this message finds you well' type stuff\n"
+        f"- NEVER suggest or pick specific days/times for tours — if asking about viewing, say something like 'would love to set up a tour' without committing to a date\n"
+        f"- Return ONLY a JSON array of strings, e.g. [\"msg1\", \"msg2\"]\n"
+    )
+    try:
+        async with httpx.AsyncClient() as http:
+            resp = await http.post(
+                "https://api.x.ai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {config.XAI_API_KEY}", "Content-Type": "application/json"},
+                json={"model": "grok-3", "messages": [{"role": "user", "content": prompt}], "max_tokens": 400},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            text = resp.json()["choices"][0]["message"]["content"].strip()
+            match = re.search(r"\[.*\]", text, re.DOTALL)
+            if match:
+                parts = json.loads(match.group())
+                if isinstance(parts, list) and all(isinstance(p, str) for p in parts):
+                    return [p.strip() for p in parts if p.strip()][:4]
+    except Exception as exc:
+        log.warning("Grok SMS parts generation failed, using fallback: %s", exc)
+
+    # Fallback: two simple messages
+    name = dyn_vars.get("renter_name", "a renter")
+    title = dyn_vars.get("listing_title", "your listing")
+    addr = dyn_vars.get("listing_address", "")
+    parts = [f"Hi, reaching out on behalf of {name} about {title}" + (f" at {addr}" if addr else "") + ". Is it still available?"]
+    extras = []
+    if move_in and move_in != "flexible":
+        extras.append(f"looking to move in around {move_in}")
+    if pets and pets.lower() != "none":
+        extras.append(f"has {pets}")
+    if extras:
+        parts.append(f"They're {' and '.join(extras)}. Would that work?")
+    if custom:
+        parts.append(custom[:160])
+    return parts
+
+
+@app.post("/api/outreach/start")
+async def api_start_outreach(body: StartOutreachRequest) -> dict[str, Any]:
+    """Start parallel outreach to multiple landlords on behalf of the renter."""
+    cleaned_phone = body.renter_phone.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    if not _PHONE_RE.match(cleaned_phone):
+        raise HTTPException(status_code=400, detail="Invalid renter phone number")
+    profile = get_renter_profile(cleaned_phone)
+    if not profile:
+        raise HTTPException(status_code=400, detail="Renter profile required before outreach")
+
+    async def _dispatch_one(item: OutreachListingItem) -> dict[str, Any]:
+        oid = f"out_{uuid.uuid4().hex[:16]}"
+        listing_payload = json.dumps(item.listing)
+        if len(listing_payload) > 50_000:
+            raise HTTPException(status_code=400, detail=f"Listing payload too large for {item.listing_id}")
+        if item.landlord_phone:
+            lp = item.landlord_phone.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+            if not _PHONE_RE.match(lp):
+                raise HTTPException(status_code=400, detail=f"Invalid landlord phone for listing {item.listing_id}")
+            # Normalize to E.164: ensure +1 prefix for US numbers
+            lp = lp.lstrip("+")
+            if len(lp) == 10:
+                lp = f"+1{lp}"
+            elif lp.startswith("1") and len(lp) == 11:
+                lp = f"+{lp}"
+            else:
+                lp = f"+{lp}"
+            item.landlord_phone = lp
+        create_outreach(
+            outreach_id=oid,
+            renter_phone=cleaned_phone,
+            listing_id=item.listing_id,
+            listing_json=listing_payload,
+            landlord_phone=item.landlord_phone,
+            channel=body.channel,
+            custom_message=body.custom_message,
+        )
+        add_outreach_event(oid, "created", f"Channel: {body.channel}")
+
+        # If landlord phone is available, dispatch the agent
+        if item.landlord_phone:
+            # Build dynamic variables for the agent prompt
+            dyn_vars = {
+                "renter_name": profile.get("name") or "the renter",
+                "renter_budget": str(profile.get("budget_max") or "flexible"),
+                "renter_move_in": profile.get("move_in_date") or "flexible",
+                "renter_pets": profile.get("pets") or "none",
+                "renter_dealbreakers": profile.get("dealbreakers") or "",
+                "listing_title": item.listing.get("title", ""),
+                "listing_address": item.listing.get("address", ""),
+                "listing_price": str(item.listing.get("price_min") or item.listing.get("price", "")),
+                "listing_description": (item.listing.get("description") or "")[:1000],
+                "listing_bedrooms": str(item.listing.get("bedrooms", "")),
+                "listing_bathrooms": str(item.listing.get("bathrooms", "")),
+                "listing_source": item.listing.get("source", ""),
+                "custom_message": body.custom_message or "",
+                "renter_phone": cleaned_phone,
+                "outreach_id": oid,
+            }
+            try:
+                if body.channel == "call":
+                    client = RetellClient()
+                    resp = await client.create_phone_call(RetellOutboundCallRequest(
+                        to_number=item.landlord_phone,
+                        retell_llm_dynamic_variables=dyn_vars,
+                        metadata={"outreach_id": oid, "renter_phone": cleaned_phone},
+                    ))
+                else:
+                    sms_parts = await _build_sms_parts(dyn_vars)
+                    sms_results = await _send_sms_parts(item.landlord_phone, sms_parts)
+                    sms_sid = sms_results[0].get("sid", "") if sms_results else ""
+                    update_outreach(oid, status="contacted", conversation_id=sms_sid)
+                    for part in sms_parts:
+                        add_outreach_event(oid, "contacted", json.dumps({"sms_sid": sms_sid, "body": part}))
+                    return get_outreach(oid)  # type: ignore[return-value]
+                conv_id = resp.get("call_id") or resp.get("chat_id") or resp.get("conversation_id")
+                update_outreach(oid, status="contacted", conversation_id=conv_id)
+                add_outreach_event(oid, "contacted", f"Conversation: {conv_id}")
+            except Exception as exc:
+                log.error("Outreach dispatch failed for %s: %s", oid, exc)
+                update_outreach(oid, status="error")
+                add_outreach_event(oid, "error", str(exc))
+        else:
+            update_outreach(oid, status="no_phone")
+            add_outreach_event(oid, "no_phone", "No landlord phone available")
+
+        return get_outreach(oid)  # type: ignore[return-value]
+
+    # Dispatch all outreach in parallel
+    tasks = [_dispatch_one(item) for item in body.listings]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    outreach_results = []
+    for r in results:
+        if isinstance(r, Exception):
+            log.error("Outreach error: %s", r)
+            outreach_results.append({"error": str(r)})
+        else:
+            outreach_results.append(r)
+
+    return {"ok": True, "outreach": outreach_results}
+
+
+async def _analyze_sms_conversation(conversation: str, landlord_reply: str, listing: dict) -> dict[str, Any]:
+    """Use Grok to analyze the landlord's reply for intent, scam signals, and next action."""
+    prompt = (
+        f"Analyze this landlord's latest SMS reply in a housing outreach conversation.\n\n"
+        f"Listing: {listing.get('title', '')} at {listing.get('address', '')}, ${listing.get('price_min') or listing.get('price', '?')}/mo\n"
+        f"Conversation:\n{conversation}\n\n"
+        f"Latest landlord reply: \"{landlord_reply}\"\n\n"
+        f"Return ONLY a JSON object with these fields:\n"
+        f"- \"intent\": one of \"available\", \"unavailable\", \"touring\", \"negotiating\", \"scam\", \"unclear\"\n"
+        f"- \"should_reply\": true/false (false if rejected, scam, or conversation is done)\n"
+        f"- \"status\": one of \"responded\", \"touring\", \"rejected\", \"scam_flagged\"\n"
+        f"- \"tour_time\": extracted tour date/time string if mentioned, else null\n"
+        f"- \"scam_flags\": string describing red flags if any (asking for wire transfer, upfront payment before seeing unit, won't show in person, too-good-to-be-true), else null\n"
+        f"- \"summary\": 1-sentence summary of where the conversation stands\n"
+    )
+    try:
+        async with httpx.AsyncClient() as http:
+            resp = await http.post(
+                "https://api.x.ai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {config.XAI_API_KEY}", "Content-Type": "application/json"},
+                json={"model": "grok-3", "messages": [{"role": "user", "content": prompt}], "max_tokens": 300},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            text = resp.json()["choices"][0]["message"]["content"].strip()
+            match = re.search(r"\{.*\}", text, re.DOTALL)
+            if match:
+                return json.loads(match.group())
+    except Exception as exc:
+        log.warning("SMS analysis failed: %s", exc)
+    return {"intent": "unclear", "should_reply": True, "status": "responded", "tour_time": None, "scam_flags": None, "summary": ""}
+
+
+def _validate_twilio_signature(request: Request, form_data: dict[str, str]) -> bool:
+    """Validate Twilio webhook signature to prevent spoofed requests."""
+    auth_token = config.TWILIO_AUTH_TOKEN
+    if not auth_token:
+        return True  # skip validation if no token configured
+    signature = request.headers.get("X-Twilio-Signature", "")
+    if not signature:
+        return False
+    url = str(request.url)
+    # Twilio signs over URL + sorted POST params
+    data_str = url + "".join(f"{k}{form_data[k]}" for k in sorted(form_data.keys()))
+    expected = base64.b64encode(
+        hmac.HMAC(auth_token.encode(), data_str.encode(), hashlib.sha1).digest()
+    ).decode()
+    return hmac.compare_digest(signature, expected)
+
+
+@app.post("/api/twilio/sms-webhook")
+async def twilio_sms_webhook(request: Request):
+    """Handle inbound SMS from Twilio — landlord replies to our outreach texts."""
+    form = await request.form()
+    form_dict = {k: str(v) for k, v in form.items()}
+    from_number = form_dict.get("From", "").strip()
+    body_text = form_dict.get("Body", "").strip()
+    sms_sid = form_dict.get("MessageSid", "")
+
+    # Twilio expects TwiML — empty response means "no auto-reply from Twilio side"
+    empty_twiml = Response(content="<Response/>", media_type="application/xml")
+
+    if not _validate_twilio_signature(request, form_dict):
+        log.warning("Invalid Twilio signature from %s", request.client.host if request.client else "unknown")
+        return empty_twiml
+
+    if not from_number or not body_text:
+        return empty_twiml
+
+    # Normalize phone to E.164 for matching
+    from_clean = from_number.replace("-", "").replace(" ", "").replace("(", "").replace(")", "")
+    if not from_clean.startswith("+"):
+        from_clean = f"+{from_clean}" if from_clean.startswith("1") else f"+1{from_clean}"
+
+    # Find the most recent outreach to this landlord phone
+    conn = db.get_conn()
+    try:
+        row = conn.execute(
+            "SELECT outreach_id, renter_phone, status FROM outreach WHERE landlord_phone = ? AND channel='text' ORDER BY created_at DESC LIMIT 1",
+            (from_clean,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        log.info("Inbound SMS from %s with no matching outreach", from_number)
+        return empty_twiml
+
+    oid = row["outreach_id"]
+    current_status = row["status"]
+
+    # Don't process replies for conversations that are done
+    if current_status in ("rejected", "scam_flagged"):
+        log.info("Ignoring SMS for %s — conversation is %s", oid, current_status)
+        add_outreach_event(oid, "sms_reply_ignored", json.dumps({"from": from_number, "body": body_text, "reason": f"conversation {current_status}"}))
+        return empty_twiml
+
+    # Per-outreach lock prevents race conditions when multiple SMS arrive fast
+    if oid not in _outreach_locks:
+        _outreach_locks[oid] = asyncio.Lock()
+    async with _outreach_locks[oid]:
+        add_outreach_event(oid, "sms_reply", json.dumps({
+            "from": from_number,
+            "body": body_text,
+            "sms_sid": sms_sid,
+        }))
+        log.info("Inbound SMS matched outreach %s: %s", oid, body_text[:100])
+
+        try:
+            # Re-read status under lock in case it changed
+            outreach = get_outreach(oid)
+            if not outreach:
+                return empty_twiml
+            current_status = outreach.get("status", current_status)
+
+            events = list_outreach_events(oid)
+            conversation = "\n".join(
+                f"{'Us' if e['event_type'] in ('contacted', 'sms_sent', 'followup_sent') else 'Landlord'}: {_extract_sms_body(e['detail'])}"
+                for e in events if e["event_type"] in ("contacted", "sms_reply", "sms_sent", "followup_sent")
+            )
+            profile = get_renter_profile(row["renter_phone"])
+            listing = json.loads(outreach.get("listing_json", "{}")) if outreach else {}
+
+            # Analyze the reply for intent
+            analysis = await _analyze_sms_conversation(conversation, body_text, listing)
+            new_status = analysis.get("status", "responded")
+            if new_status not in VALID_OUTREACH_STATUSES:
+                new_status = "responded"
+
+            # Update outreach with analysis results
+            update_outreach(
+                oid,
+                status=new_status,
+                summary=analysis.get("summary") or body_text[:500],
+                scam_flags=analysis.get("scam_flags"),
+                tour_time=analysis.get("tour_time"),
+            )
+            add_outreach_event(oid, "analysis", json.dumps(analysis))
+
+            # Notify renter on important status changes
+            if new_status != current_status and new_status in ("responded", "touring", "scam_flagged", "rejected"):
+                notify = False
+                if new_status == "responded" and current_status == "contacted":
+                    notify = True
+                elif new_status in ("touring", "scam_flagged", "rejected"):
+                    notify = True
+                if notify:
+                    asyncio.create_task(_notify_renter(
+                        row["renter_phone"], oid, new_status, listing,
+                        detail=analysis.get("summary", ""),
+                    ))
+
+            # Only auto-reply if analysis says we should
+            if analysis.get("should_reply", True):
+                msg_count = sum(1 for e in events if e["event_type"] in ("sms_sent", "contacted"))
+                if msg_count >= 20:
+                    log.info("Outreach %s hit 20-message cap, stopping auto-reply", oid)
+                    add_outreach_event(oid, "auto_reply_capped", "Reached 20-message limit")
+                else:
+                    renter_name = profile.get("name", "the renter") if profile else "the renter"
+                    pets_info = profile.get("pets", "none") if profile else "none"
+                    dealbreakers = profile.get("dealbreakers", "") if profile else ""
+
+                    reply_prompt = (
+                        f"You're texting a landlord on behalf of a renter. Write 1-2 SHORT separate texts (like how people actually text).\n\n"
+                        f"Listing: {listing.get('title', '')} at {listing.get('address', '')}\n"
+                        f"Renter: {renter_name}, budget ${profile.get('budget_max', 'flexible') if profile else 'flexible'}, "
+                        f"move-in {profile.get('move_in_date', 'flexible') if profile else 'flexible'}\n"
+                        f"Pets: {pets_info}\n"
+                        f"Dealbreakers: {dealbreakers or 'none'}\n"
+                        f"Conversation so far:\n{conversation}\n\n"
+                        f"Analysis: intent={analysis.get('intent')}, tour={analysis.get('tour_time')}\n\n"
+                        f"Rules:\n"
+                        f"- Each message under 160 chars\n"
+                        f"- If a tour was proposed, say you'll check with {renter_name} on their availability and get back to them — NEVER confirm a specific day/time without asking the renter first\n"
+                        f"- If the landlord asks when the renter is free or suggests times, say you need to check with {renter_name} and will follow up\n"
+                        f"- NEVER invent or suggest specific dates/times for tours — only the renter can decide their schedule\n"
+                        f"- If unavailable, thank them politely\n"
+                        f"- If scam flags, disengage politely\n"
+                        f"- Ask about key stuff not yet covered: lease term, utilities, pets, move-in flexibility\n"
+                        f"- Push toward scheduling a tour if one isn't set yet, but say you'll confirm times with the renter\n"
+                        f"- Do NOT repeat questions already answered\n"
+                        f"- Do NOT make up info about the renter\n"
+                        f"- Return ONLY a JSON array of strings, e.g. [\"msg1\", \"msg2\"]\n"
+                    )
+                    async with httpx.AsyncClient() as http:
+                        grok_resp = await http.post(
+                            "https://api.x.ai/v1/chat/completions",
+                            headers={"Authorization": f"Bearer {config.XAI_API_KEY}", "Content-Type": "application/json"},
+                            json={"model": "grok-3", "messages": [{"role": "user", "content": reply_prompt}], "max_tokens": 300},
+                            timeout=10,
+                        )
+                        grok_resp.raise_for_status()
+                        reply_raw = grok_resp.json()["choices"][0]["message"]["content"].strip()
+
+                    reply_parts = [reply_raw]
+                    try:
+                        match = re.search(r"\[.*\]", reply_raw, re.DOTALL)
+                        if match:
+                            parsed = json.loads(match.group())
+                            if isinstance(parsed, list) and all(isinstance(p, str) for p in parsed):
+                                reply_parts = [p.strip() for p in parsed if p.strip()][:3]
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                    await _send_sms_parts(from_number, reply_parts)
+                    for part in reply_parts:
+                        add_outreach_event(oid, "sms_sent", json.dumps({"body": part}))
+                    log.info("Auto-replied (%d parts) to %s for outreach %s (intent: %s)", len(reply_parts), from_number, oid, analysis.get("intent"))
+            else:
+                log.info("Not replying to %s — analysis says should_reply=false (intent: %s)", oid, analysis.get("intent"))
+                add_outreach_event(oid, "auto_reply_skipped", json.dumps({"reason": analysis.get("intent")}))
+                if new_status in ("rejected", "scam_flagged") and new_status == current_status:
+                    asyncio.create_task(_notify_renter(
+                        row["renter_phone"], oid, new_status, listing,
+                        detail=analysis.get("summary", ""),
+                    ))
+
+        except Exception as exc:
+            log.error("SMS processing failed for outreach %s: %s", oid, exc)
+
+    # Clean up lock if no longer needed
+    if oid in _outreach_locks and not _outreach_locks[oid].locked():
+        _outreach_locks.pop(oid, None)
+
+    return empty_twiml
+
+
+def _extract_sms_body(detail: str | None) -> str:
+    """Extract SMS body text from an event detail JSON string."""
+    if not detail:
+        return ""
+    try:
+        d = json.loads(detail)
+        return d.get("body", "")
+    except (json.JSONDecodeError, TypeError):
+        return detail
+
+
+@app.get("/api/outreach/dashboard/{phone}")
+async def api_outreach_dashboard(phone: str) -> dict[str, Any]:
+    """Get all outreach for a renter — the dashboard view with events."""
+    phone = phone.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")","").replace("+","")
+    items = list_outreach_for_renter(phone)
+    if items:
+        events_map = batch_list_outreach_events([i["outreach_id"] for i in items])
+        for item in items:
+            item["events"] = events_map.get(item["outreach_id"], [])
+    return {"phone": phone, "count": len(items), "outreach": items}
+
+
+@app.get("/api/outreach/{outreach_id}")
+async def api_get_outreach(outreach_id: str) -> dict[str, Any]:
+    record = get_outreach(outreach_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Outreach not found")
+    record["events"] = list_outreach_events(outreach_id)
+    return record
+
+
+class OutreachUpdateRequest(BaseModel):
+    status: str | None = None
+    scam_flags: str | None = Field(default=None, max_length=1000)
+    negotiation_result: str | None = Field(default=None, max_length=1000)
+    tour_time: str | None = Field(default=None, max_length=200)
+    summary: str | None = Field(default=None, max_length=2000)
+
+
+@app.post("/api/outreach/{outreach_id}/update")
+async def api_update_outreach(outreach_id: str, body: OutreachUpdateRequest) -> dict[str, Any]:
+    if body.status and body.status not in VALID_OUTREACH_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(sorted(VALID_OUTREACH_STATUSES))}")
+    ok = update_outreach(
+        outreach_id,
+        status=body.status,
+        scam_flags=body.scam_flags,
+        negotiation_result=body.negotiation_result,
+        tour_time=body.tour_time,
+        summary=body.summary,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Outreach not found")
+    if body.status:
+        add_outreach_event(outreach_id, "status_change", body.status)
+    return {"ok": True}

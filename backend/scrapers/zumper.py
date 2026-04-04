@@ -78,7 +78,7 @@ def _parse_items(
             furnished=False,
             available_from=date_available,
             available_to=None,
-            no_fee=item.get("leasing_fee") == 0,
+            no_fee=item.get("leasing_fee", 0) in (0, None),
             url=listing_url,
             photo_url=photo_urls[0] if photo_urls else None,
             photos=photo_urls,
@@ -111,7 +111,7 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
             return []
 
         listings = _parse_items(first_page.get("listables", []), city_slug, min_price, max_price, bedrooms)
-        total = first_page.get("matching", 0)
+        total = min(first_page.get("matching", 0), 500)  # cap to prevent excessive requests
         offsets = list(range(PAGE_SIZE, total, PAGE_SIZE))
 
         if not offsets:

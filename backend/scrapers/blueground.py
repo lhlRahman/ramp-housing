@@ -118,7 +118,10 @@ async def scrape(city_slug: str | None, check_in: str | None, check_out: str | N
                 lat = coords.get("lat")
                 lng = coords.get("lng")
 
-                listing_url = card.get("href") or f"https://www.theblueground.com/p/furnished-apartments/{prop_code}"
+                listing_url = card.get("href") or (f"https://www.theblueground.com/p/furnished-apartments/{prop_code}" if prop_code else "")
+                if not listing_url:
+                    # No URL and no prop_code — use map_id as fallback identifier
+                    listing_url = f"https://www.theblueground.com/p/{map_id}"
 
                 listings.append(Listing(
                     id=make_id("blueground", listing_url),

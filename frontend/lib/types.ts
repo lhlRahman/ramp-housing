@@ -91,3 +91,62 @@ export const SOURCE_COLORS: Record<string, string> = {
   zumper: "#14b8a6",
   craigslist: "#a855f7",
 };
+
+// ── Renter Profile & Outreach ─────────────────────────────────
+
+export interface RenterProfile {
+  phone: string;
+  name: string | null;
+  current_city: string | null;
+  move_in_date: string | null;
+  budget_max: number | null;
+  income_range: string | null;
+  credit_score_range: string | null;
+  pets: string | null;
+  smoker: boolean;
+  guarantor: boolean;
+  dealbreakers: string | null;
+  free_text_context: string | null;
+}
+
+export interface OutreachItem {
+  outreach_id: string;
+  renter_phone: string;
+  listing_id: string;
+  listing: Record<string, any>;
+  landlord_phone: string | null;
+  channel: string;
+  custom_message: string | null;
+  status: string;
+  conversation_id: string | null;
+  scam_flags: string | null;
+  negotiation_result: string | null;
+  tour_time: string | null;
+  summary: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export const OUTREACH_STATUS_LABELS: Record<string, string> = {
+  pending: "Pending",
+  contacted: "Contacted",
+  responded: "Responded",
+  touring: "Tour Scheduled",
+  ghosted: "Ghosted",
+  rejected: "Rejected",
+  scam_flagged: "Scam Flagged",
+  no_phone: "No Phone",
+  error: "Error",
+};
+
+export const OUTREACH_STATUS_COLORS: Record<string, string> = {
+  pending: "#6b7280",
+  contacted: "#3b82f6",
+  responded: "#10b981",
+  touring: "#8b5cf6",
+  ghosted: "#6b7280",
+  rejected: "#ef4444",
+  scam_flagged: "#f59e0b",
+  no_phone: "#6b7280",
+  error: "#ef4444",
+};
