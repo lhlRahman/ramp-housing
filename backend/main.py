@@ -730,6 +730,26 @@ async def health():
     return {"status": "ok"}
 
 
+@app.delete("/api/cache")
+async def clear_scrape_cache(source: str = Query(""), city: str = Query("")):
+    """Clear scrape cache. Optional filters: source, city. No params = clear all."""
+    conn = db.get_conn()
+    try:
+        if source and city:
+            n = conn.execute("DELETE FROM scrape_cache WHERE cache_key LIKE ?", (f"{source}:{city}%",)).rowcount
+        elif source:
+            n = conn.execute("DELETE FROM scrape_cache WHERE cache_key LIKE ?", (f"{source}:%",)).rowcount
+        elif city:
+            n = conn.execute("DELETE FROM scrape_cache WHERE cache_key LIKE ?", (f"%:{city}:%",)).rowcount
+        else:
+            n = conn.execute("DELETE FROM scrape_cache").rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    log.info("Cleared %d scrape cache entries (source=%s, city=%s)", n, source or "*", city or "*")
+    return {"deleted": n}
+
+
 @app.post("/api/retell/tools/search-listings")
 async def retell_search_listings(request: Request) -> dict[str, Any]:
     payload = await request.json()
