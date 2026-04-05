@@ -1369,8 +1369,40 @@ async def api_start_outreach(request: Request, body: StartOutreachRequest) -> di
             listing_price = item.listing.get("price_min") or item.listing.get("price", "")
             listing_beds = item.listing.get("bedrooms", "")
             move_in = profile.get("move_in_date") or "as soon as possible"
+            budget_max = profile.get("budget_max") or ""
+            income_range = profile.get("income_range") or ""
+            credit_score = profile.get("credit_score_range") or ""
+            pets = profile.get("pets") or "none"
+            has_guarantor = profile.get("has_guarantor", False)
+            smoker = profile.get("smoker", False)
+            dealbreakers = profile.get("dealbreakers") or ""
+            extra_notes = profile.get("notes") or ""
 
             addr_part = f" at {listing_addr}" if listing_addr else ""
+
+            # Build renter profile context so the agent can answer landlord questions
+            renter_profile_str = f"Renter profile for {renter_name}:"
+            if budget_max:
+                renter_profile_str += f" Budget up to ${budget_max}/mo."
+            if income_range:
+                renter_profile_str += f" Income: {income_range}."
+            if credit_score:
+                renter_profile_str += f" Credit score: {credit_score}."
+            renter_profile_str += f" Move-in: {move_in}."
+            if pets and pets != "none":
+                renter_profile_str += f" Pets: {pets}."
+            else:
+                renter_profile_str += " No pets."
+            if has_guarantor:
+                renter_profile_str += " Has a guarantor."
+            if smoker:
+                renter_profile_str += " Smoker."
+            else:
+                renter_profile_str += " Non-smoker."
+            if dealbreakers:
+                renter_profile_str += f" Dealbreakers: {dealbreakers}."
+            if extra_notes:
+                renter_profile_str += f" Note: {extra_notes}."
 
             # Build follow-up questions for things NOT already known
             known_facts = []
@@ -1400,12 +1432,15 @@ async def api_start_outreach(request: Request, body: StartOutreachRequest) -> di
                 f"about the {listing_title}{addr_part}. "
                 f"I see it's listed as {known_str}. Is this unit still available? "
                 f"If so, I have a few quick questions: {questions_str} "
-                f"And could we schedule a viewing for {renter_name}?"
+                f"And could we schedule a viewing for {renter_name}?\n\n"
+                f"IMPORTANT — You have the renter's full profile. If the landlord asks about budget, income, "
+                f"credit, pets, or anything else, answer confidently from this info:\n"
+                f"{renter_profile_str}"
             )
 
             custom_note = body.custom_message or ""
             if custom_note:
-                call_script += f" {custom_note}"
+                call_script += f"\n\nAdditional note: {custom_note}"
 
             dyn_vars = {
                 "call_script": call_script,
@@ -1416,9 +1451,15 @@ async def api_start_outreach(request: Request, body: StartOutreachRequest) -> di
                 "listing_bedrooms": str(listing_beds),
                 "listing_furnished": "yes" if item.listing.get("furnished") else "",
                 "move_in_date": move_in,
+                "budget_max": str(budget_max),
+                "income_range": income_range,
+                "credit_score": credit_score,
+                "renter_pets": pets,
+                "renter_dealbreakers": dealbreakers,
+                "renter_notes": extra_notes,
+                "has_guarantor": "yes" if has_guarantor else "no",
+                "smoker": "yes" if smoker else "no",
                 "custom_message": body.custom_message or "",
-                "renter_pets": profile.get("pets") or "none",
-                "renter_dealbreakers": profile.get("dealbreakers") or "",
                 "outreach_id": oid,
                 "renter_phone": cleaned_phone,
             }
