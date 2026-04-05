@@ -16,7 +16,12 @@ async function authFetch(url: string, init?: RequestInit): Promise<Response> {
   const headers = authHeaders(
     init?.body ? { "Content-Type": "application/json" } : undefined,
   );
-  return fetch(url, { ...init, headers: { ...headers, ...init?.headers } });
+  const resp = await fetch(url, { ...init, headers: { ...headers, ...init?.headers } });
+  if (resp.status === 401 && typeof window !== "undefined" && !url.includes("/api/auth/")) {
+    clearAuth();
+    window.location.href = "/";
+  }
+  return resp;
 }
 
 export interface SearchCallbacks {

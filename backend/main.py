@@ -1693,7 +1693,13 @@ class OutreachUpdateRequest(BaseModel):
 
 
 @app.post("/api/outreach/{outreach_id}/update")
-async def api_update_outreach(outreach_id: str, body: OutreachUpdateRequest) -> dict[str, Any]:
+async def api_update_outreach(request: Request, outreach_id: str, body: OutreachUpdateRequest) -> dict[str, Any]:
+    user = _require_user(request)
+    record = get_outreach(outreach_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Outreach not found")
+    if record.get("renter_phone") != user["phone"]:
+        raise HTTPException(status_code=403, detail="Not your outreach")
     if body.status and body.status not in VALID_OUTREACH_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(sorted(VALID_OUTREACH_STATUSES))}")
     ok = update_outreach(

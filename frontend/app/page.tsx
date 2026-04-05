@@ -142,14 +142,6 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
     }
   }, [profileHydrated, renterProfile]);
 
-  // Auto-load seeded test profile if none stored (dev only)
-  useEffect(() => {
-    if (!profileHydrated || renterProfile || process.env.NODE_ENV !== "development") return;
-    getRenterProfile("16477732191").then(p => {
-      if (p) setRenterProfile(p);
-    }).catch(() => {});
-  }, [profileHydrated, renterProfile]);
-
   // Escape key closes modals
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
