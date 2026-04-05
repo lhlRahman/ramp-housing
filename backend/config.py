@@ -54,8 +54,5 @@ TWILIO_FROM_NUMBER = os.getenv("TWILIO_FROM_NUMBER", "")
 INTERNAL_ESCALATION_WEBHOOK_URL = os.getenv("INTERNAL_ESCALATION_WEBHOOK_URL", "")
 INTERNAL_ESCALATION_WEBHOOK_BEARER_TOKEN = os.getenv("INTERNAL_ESCALATION_WEBHOOK_BEARER_TOKEN", "")
 
-# API authentication
-API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")  # Required in production for admin/outreach endpoints
-
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
