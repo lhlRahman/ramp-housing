@@ -2,6 +2,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 import FiltersBar from "@/components/FiltersBar";
 import ListingCard from "@/components/ListingCard";
 import ListingDetail from "@/components/ListingDetail";
@@ -28,39 +29,39 @@ function sortListings(listings: Listing[], sort: SortOption): Listing[] {
 
 export default function Home() {
   const router = useRouter();
-
-  // ── Auth ──────────────────────────────────────────────────────
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
 
   useEffect(() => {
     const token = getAuthToken();
     if (!token) { setAuthChecked(true); return; }
-    // Try to restore session
     const stored = localStorage.getItem("auth_user");
-    if (stored) {
-      try { setAuthUser(JSON.parse(stored)); } catch { /* ignore */ }
-    }
-    // Validate token with backend
+    if (stored) { try { setAuthUser(JSON.parse(stored)); } catch { /* ignore */ } }
     getMe().then((data) => {
       const user: AuthUser = { user_id: data.user_id, phone: data.phone, name: data.name };
       setAuthUser(user);
       localStorage.setItem("auth_user", JSON.stringify(user));
-      if (data.profile) {
-        localStorage.setItem("renter_profile", JSON.stringify(data.profile));
-      }
-    }).catch(() => {
-      clearAuth();
-      setAuthUser(null);
-    }).finally(() => setAuthChecked(true));
+      if (data.profile) localStorage.setItem("renter_profile", JSON.stringify(data.profile));
+    }).catch(() => { clearAuth(); setAuthUser(null); }).finally(() => setAuthChecked(true));
   }, []);
 
   if (!authChecked) {
-    return <div className="min-h-screen bg-surface-0 flex items-center justify-center"><div className="text-text-secondary text-sm">Loading...</div></div>;
+    return (
+      <div className="min-h-screen bg-surface-0 flex items-center justify-center">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="flex flex-col items-center gap-3"
+        >
+          <div className="w-8 h-8 rounded-full border-2 border-surface-4 border-t-ramp-lime animate-spin" />
+          <span className="text-text-muted text-sm">Loading...</span>
+        </motion.div>
+      </div>
+    );
   }
 
   if (!authUser) {
-    return <LoginScreen onLogin={(user) => { setAuthUser(user); }} />;
+    return <LoginScreen onLogin={(user) => setAuthUser(user)} />;
   }
 
   return <AuthenticatedApp authUser={authUser} onLogout={() => { logout(); setAuthUser(null); }} />;
@@ -74,21 +75,15 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
   const [sort, setSort] = useState<SortOption>("price_asc");
   const [showEmptyState, setShowEmptyState] = useState(true);
 
-  // Renter profile
   const [renterProfile, setRenterProfile] = useState<RenterProfile | null>(null);
   const [profileHydrated, setProfileHydrated] = useState(false);
   useEffect(() => {
     try {
       const stored = localStorage.getItem("renter_profile");
       setRenterProfile(stored ? JSON.parse(stored) : null);
-    } catch {
-      setRenterProfile(null);
-    } finally {
-      setProfileHydrated(true);
-    }
+    } catch { setRenterProfile(null); } finally { setProfileHydrated(true); }
   }, []);
   const [showProfileModal, setShowProfileModal] = useState(false);
-  // When user tries to contact without a profile, we store intent and show profile modal first
   const [pendingContactListing, setPendingContactListing] = useState<Listing | null>(null);
 
   const mapCenter: [number, number] = [40.7128, -74.006];
@@ -106,11 +101,9 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
     dragStartWidth.current = sidebarWidth;
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
-
     const onMove = (e: MouseEvent) => {
       if (!dragging.current) return;
-      const delta = dragStartX.current - e.clientX;
-      setSidebarWidth(Math.min(700, Math.max(280, dragStartWidth.current + delta)));
+      setSidebarWidth(Math.min(700, Math.max(280, dragStartWidth.current + (dragStartX.current - e.clientX))));
     };
     const onUp = () => {
       dragging.current = false;
@@ -132,17 +125,12 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
   const { listings, unmappedListings, loading, error, stats, sourceStatuses, runSearch, resetResults } = useHousingSearch();
   const [showUnmapped, setShowUnmapped] = useState(false);
 
-  // Persist profile to localStorage
   useEffect(() => {
     if (!profileHydrated) return;
-    if (renterProfile) {
-      localStorage.setItem("renter_profile", JSON.stringify(renterProfile));
-    } else {
-      localStorage.removeItem("renter_profile");
-    }
+    if (renterProfile) localStorage.setItem("renter_profile", JSON.stringify(renterProfile));
+    else localStorage.removeItem("renter_profile");
   }, [profileHydrated, renterProfile]);
 
-  // Escape key closes modals
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -156,13 +144,13 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
 
   const doSearch = useCallback((poly: [number, number][], resolvedFilters = filters) => {
     runSearch(poly, resolvedFilters, {
-      onInit: (locationName, sources) => { handleSearchInit(locationName, sources); },
+      onInit: (locationName, sources) => handleSearchInit(locationName, sources),
     });
   }, [filters, handleSearchInit, runSearch]);
 
   const handlePolygonChange = useCallback((poly: [number, number][] | null) => {
     setPolygon(poly);
-    if (poly) { doSearch(poly, filters); }
+    if (poly) doSearch(poly, filters);
     else { resetResults(); clearLocation(); }
   }, [clearLocation, doSearch, filters, resetResults]);
 
@@ -203,95 +191,181 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
             onDrawStart={() => setShowEmptyState(false)}
           />
 
-          {loading && Object.keys(sourceStatuses).length > 0 && (
-            <div className="absolute top-3 right-3 z-[1000] pointer-events-none">
-              <div className="bg-surface-2/95 backdrop-blur border border-border rounded-xl px-4 py-3 shadow-card-hover min-w-[200px]">
-                <p className="text-xs font-semibold text-text-primary mb-2">
-                  {detectedLocation ? `Scraping ${detectedLocation}` : "Detecting location..."}
-                </p>
-                <div className="space-y-1.5">
-                  {Object.entries(sourceStatuses).map(([src, s]) => (
-                    <div key={src} className="flex items-center gap-2 text-[11px]">
-                      <div className="w-1.5 h-1.5 rounded-full shrink-0" style={{
-                        backgroundColor: s.status === "done" ? (s.count > 0 ? "#22c55e" : "#6b7280") : s.status === "error" ? "#ef4444" : SOURCE_COLORS[src] || "#6b7280",
-                        animation: s.status === "scraping" ? "pulse 1.5s infinite" : "none",
-                      }} />
-                      <span className="text-text-secondary flex-1">{SOURCE_LABELS[src] || src}</span>
-                      <span className={`font-mono tabular-nums ${s.status === "done" ? (s.count > 0 ? "text-ramp-lime" : "text-text-muted") : s.status === "error" ? "text-red-400" : "text-text-muted"}`}>
-                        {s.status === "scraping" ? "..." : s.status === "error" ? "err" : s.cached ? `${s.count} (cached)` : String(s.count)}
-                      </span>
-                    </div>
-                  ))}
+          {/* Scraper status overlay */}
+          <AnimatePresence>
+            {loading && Object.keys(sourceStatuses).length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                className="absolute top-3 right-3 z-[1000] pointer-events-none"
+              >
+                <div className="glass-strong rounded-xl px-4 py-3 shadow-card-hover min-w-[200px]">
+                  <p className="text-xs font-semibold text-text-primary mb-2">
+                    {detectedLocation ? `Scraping ${detectedLocation}` : "Detecting location..."}
+                  </p>
+                  <div className="space-y-1.5">
+                    {Object.entries(sourceStatuses).map(([src, s]) => (
+                      <motion.div
+                        key={src}
+                        className="flex items-center gap-2 text-[11px]"
+                        initial={{ opacity: 0, x: 8 }}
+                        animate={{ opacity: 1, x: 0 }}
+                      >
+                        <motion.div
+                          className="w-1.5 h-1.5 rounded-full shrink-0"
+                          style={{ backgroundColor: s.status === "done" ? (s.count > 0 ? "#22c55e" : "#6b7280") : s.status === "error" ? "#ef4444" : SOURCE_COLORS[src] || "#6b7280" }}
+                          animate={s.status === "scraping" ? { scale: [1, 1.4, 1], opacity: [1, 0.5, 1] } : {}}
+                          transition={s.status === "scraping" ? { duration: 1.2, repeat: Infinity } : {}}
+                        />
+                        <span className="text-text-secondary flex-1">{SOURCE_LABELS[src] || src}</span>
+                        <span className={`font-mono tabular-nums ${s.status === "done" ? (s.count > 0 ? "text-ramp-lime" : "text-text-muted") : s.status === "error" ? "text-red-400" : "text-text-muted"}`}>
+                          {s.status === "scraping" ? "..." : s.status === "error" ? "err" : s.cached ? `${s.count} (cached)` : String(s.count)}
+                        </span>
+                      </motion.div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            </div>
-          )}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-          {(loading || parsing) && Object.keys(sourceStatuses).length === 0 && (
-            <div className="absolute inset-0 bg-surface-0/80 backdrop-blur-sm flex items-center justify-center z-[1000] pointer-events-none">
-              <div className="bg-surface-2 border border-border rounded-2xl px-8 py-6 flex flex-col items-center shadow-card-hover">
-                <div className="relative w-10 h-10 mb-3">
-                  <div className="absolute inset-0 rounded-full border-[3px] border-surface-4" />
-                  <div className="absolute inset-0 rounded-full border-[3px] border-ramp-lime border-t-transparent animate-spin" />
+          {/* Loading overlay */}
+          <AnimatePresence>
+            {(loading || parsing) && Object.keys(sourceStatuses).length === 0 && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 bg-surface-0/80 backdrop-blur-sm flex items-center justify-center z-[1000] pointer-events-none"
+              >
+                <motion.div
+                  initial={{ scale: 0.9 }}
+                  animate={{ scale: 1 }}
+                  className="glass-strong rounded-2xl px-8 py-6 flex flex-col items-center shadow-card-hover"
+                >
+                  <div className="relative w-10 h-10 mb-3">
+                    <div className="absolute inset-0 rounded-full border-[3px] border-surface-4" />
+                    <motion.div
+                      className="absolute inset-0 rounded-full border-[3px] border-ramp-lime border-t-transparent"
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    />
+                  </div>
+                  <p className="text-sm font-semibold text-text-primary">{parsing ? "Parsing filters..." : "Detecting location..."}</p>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* No sources warning */}
+          <AnimatePresence>
+            {noSourcesMessage && !loading && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[999]"
+              >
+                <div className="glass-strong border border-amber-500/20 rounded-2xl px-10 py-8 text-center max-w-sm shadow-card-hover">
+                  <div className="w-12 h-12 rounded-full bg-amber-500/10 flex items-center justify-center mx-auto mb-4">
+                    <svg className="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                    </svg>
+                  </div>
+                  <h3 className="font-semibold text-text-primary text-base mb-1">No sources available</h3>
+                  <p className="text-sm text-text-secondary leading-relaxed">{noSourcesMessage}</p>
                 </div>
-                <p className="text-sm font-semibold text-text-primary">{parsing ? "Parsing filters..." : "Detecting location..."}</p>
-              </div>
-            </div>
-          )}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-          {noSourcesMessage && !loading && (
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[999]">
-              <div className="bg-surface-2 border border-amber-500/30 rounded-2xl px-10 py-8 text-center max-w-sm shadow-card-hover">
-                <div className="w-12 h-12 rounded-full bg-amber-500/10 flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-                  </svg>
+          {/* Stats bar */}
+          <AnimatePresence>
+            {stats && !loading && !noSourcesMessage && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                className="absolute bottom-4 left-4 glass rounded-xl px-4 py-2 flex items-center gap-3 text-xs z-[999]"
+              >
+                {detectedLocation && (
+                  <>
+                    <span className="text-ramp-lime font-semibold">{detectedLocation}</span>
+                    <span className="w-px h-3 bg-border" />
+                  </>
+                )}
+                <span className="text-text-secondary">
+                  <span className="font-semibold text-text-primary">{stats.total_scraped}</span> scraped
+                </span>
+                <span className="w-px h-3 bg-border" />
+                <span className="text-text-secondary">
+                  <span className="font-semibold text-ramp-lime">{stats.returned}</span> in area
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Empty state */}
+          <AnimatePresence>
+            {showEmptyState && !polygon && !loading && listings.length === 0 && !noSourcesMessage && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[999] pointer-events-none"
+              >
+                <div className="glass-strong rounded-2xl px-10 py-8 text-center max-w-sm shadow-card-hover relative pointer-events-none">
+                  <button onClick={() => setShowEmptyState(false)} className="absolute top-2.5 right-2.5 w-6 h-6 rounded-full bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text-primary flex items-center justify-center transition-colors pointer-events-auto">
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                  <motion.div
+                    className="w-14 h-14 rounded-2xl bg-ramp-lime/10 flex items-center justify-center mx-auto mb-4"
+                    animate={{ y: [0, -4, 0] }}
+                    transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+                  >
+                    <svg className="w-7 h-7 text-ramp-lime" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+                    </svg>
+                  </motion.div>
+                  <h3 className="font-semibold text-text-primary text-base mb-1">Search anywhere</h3>
+                  <p className="text-sm text-text-secondary leading-relaxed">Drag the map to move around, then draw an area to search.</p>
                 </div>
-                <h3 className="font-semibold text-text-primary text-base mb-1">No sources available</h3>
-                <p className="text-sm text-text-secondary leading-relaxed">{noSourcesMessage}</p>
-              </div>
-            </div>
-          )}
-
-          {stats && !loading && !noSourcesMessage && (
-            <div className="absolute bottom-4 left-4 bg-surface-1/90 backdrop-blur border border-border rounded-xl px-4 py-2 flex items-center gap-3 text-xs z-[999]">
-              {detectedLocation && (<><span className="text-ramp-lime font-semibold">{detectedLocation}</span><span className="w-px h-3 bg-border" /></>)}
-              <span className="text-text-secondary"><span className="font-semibold text-text-primary">{stats.total_scraped}</span> scraped</span>
-              <span className="w-px h-3 bg-border" />
-              <span className="text-text-secondary"><span className="font-semibold text-ramp-lime">{stats.returned}</span> in area</span>
-            </div>
-          )}
-
-          {showEmptyState && !polygon && !loading && listings.length === 0 && !noSourcesMessage && (
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[999] pointer-events-none">
-              <div className="bg-surface-2 border border-border rounded-2xl px-10 py-8 text-center max-w-sm shadow-card-hover relative pointer-events-none">
-                <button onClick={() => setShowEmptyState(false)} className="absolute top-2.5 right-2.5 w-6 h-6 rounded-full bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text-primary flex items-center justify-center transition-colors pointer-events-auto">
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-                <div className="w-12 h-12 rounded-full bg-ramp-lime/10 flex items-center justify-center mx-auto mb-4">
-                  <svg className="w-6 h-6 text-ramp-lime" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
-                  </svg>
-                </div>
-                <h3 className="font-semibold text-text-primary text-base mb-1">Search anywhere</h3>
-                <p className="text-sm text-text-secondary leading-relaxed">Drag the map to move around, then draw an area to search.</p>
-              </div>
-            </div>
-          )}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Drag handle */}
         <div
           onMouseDown={onDragStart}
-          className="w-1 shrink-0 bg-border hover:bg-ramp-lime/60 cursor-col-resize transition-colors active:bg-ramp-lime"
-        />
+          className="w-1 shrink-0 bg-border hover:bg-ramp-lime/60 cursor-col-resize transition-colors active:bg-ramp-lime relative group"
+        >
+          <div className="absolute inset-y-0 -left-1 -right-1 group-hover:bg-ramp-lime/10 transition-colors" />
+        </div>
 
+        {/* Sidebar */}
         <div className="shrink-0 flex flex-col bg-surface-1 border-l border-border overflow-hidden" style={{ width: sidebarWidth }}>
           <div className="px-5 py-3 border-b border-border flex items-center justify-between">
             <div>
               <h2 className="text-sm font-semibold text-text-primary tracking-tight">
-                {listings.length > 0 ? (<>{listings.length} <span className="text-text-muted font-normal">listings</span></>) : "Results"}
+                {listings.length > 0 ? (
+                  <>
+                    <motion.span
+                      key={listings.length}
+                      initial={{ opacity: 0, y: -8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="inline-block"
+                    >
+                      {listings.length}
+                    </motion.span>
+                    {" "}
+                    <span className="text-text-muted font-normal">listings</span>
+                  </>
+                ) : "Results"}
               </h2>
               {Object.keys(sourceCounts).length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-1">
@@ -302,33 +376,43 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
               )}
             </div>
             <div className="flex items-center gap-1.5">
-              <button
+              <motion.button
                 onClick={() => setShowProfileModal(true)}
                 className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${renterProfile ? "bg-ramp-lime/10 text-ramp-lime hover:bg-ramp-lime/20" : "bg-surface-3 text-text-muted hover:text-text-primary hover:bg-surface-4"}`}
                 title={renterProfile ? `Profile: ${renterProfile.name || renterProfile.phone}` : "Set up profile"}
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.9 }}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
                 </svg>
-              </button>
+              </motion.button>
               {renterProfile && (
-                <button onClick={() => router.push("/dashboard")} className="w-8 h-8 rounded-full bg-surface-3 text-text-muted hover:text-text-primary hover:bg-surface-4 flex items-center justify-center transition-colors" title="Outreach Dashboard">
+                <motion.button
+                  onClick={() => router.push("/dashboard")}
+                  className="w-8 h-8 rounded-full bg-surface-3 text-text-muted hover:text-text-primary hover:bg-surface-4 flex items-center justify-center transition-colors"
+                  title="Outreach Dashboard"
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
                   </svg>
-                </button>
+                </motion.button>
               )}
-              <button
+              <motion.button
                 onClick={onLogout}
                 className="w-8 h-8 rounded-full bg-surface-3 text-text-muted hover:text-red-400 hover:bg-surface-4 flex items-center justify-center transition-colors"
                 title={`Sign out (${authUser.phone})`}
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.9 }}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
                 </svg>
-              </button>
+              </motion.button>
               {listings.length > 1 && (
-                <select value={sort} onChange={(e) => setSort(e.target.value as SortOption)} className="text-xs bg-surface-2 border border-border text-text-secondary rounded-lg px-2 py-1 cursor-pointer">
+                <select value={sort} onChange={(e) => setSort(e.target.value as SortOption)} className="text-xs bg-surface-2 border border-border text-text-secondary rounded-lg px-2 py-1 cursor-pointer focus:outline-none focus:border-ramp-lime/30">
                   <option value="price_asc">Price up</option>
                   <option value="price_desc">Price down</option>
                   <option value="bedrooms">Beds</option>
@@ -345,18 +429,19 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
               </div>
             ) : (
               <div className="p-3 space-y-2">
-                {sorted.map((listing) => (
+                {sorted.map((listing, i) => (
                   <ListingCard
                     key={listing.id}
                     listing={listing}
                     selected={listing.id === selectedId}
+                    index={i}
                     onClick={() => setSelectedId(prev => prev === listing.id ? null : listing.id)}
                     onOpenDetail={() => { setDetailListing(listing); setSelectedId(listing.id); }}
                   />
                 ))}
 
                 {unmappedListings.length > 0 && (
-                  <div className="mt-4">
+                  <motion.div className="mt-4" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                     <button
                       onClick={() => setShowUnmapped(!showUnmapped)}
                       className="w-full flex items-center justify-between px-3 py-2 bg-surface-2 border border-border rounded-lg text-xs hover:bg-surface-3 transition-colors"
@@ -364,65 +449,88 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
                       <span className="text-text-secondary">
                         <span className="font-semibold text-text-primary">{unmappedListings.length}</span> more without map location
                       </span>
-                      <svg className={`w-3.5 h-3.5 text-text-muted transition-transform ${showUnmapped ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <motion.svg
+                        className="w-3.5 h-3.5 text-text-muted"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                        animate={{ rotate: showUnmapped ? 180 : 0 }}
+                        transition={{ duration: 0.2 }}
+                      >
                         <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                      </svg>
+                      </motion.svg>
                     </button>
-                    {showUnmapped && (
-                      <div className="mt-2 space-y-2">
-                        {sortListings(unmappedListings, sort).map((listing) => (
-                          <ListingCard
-                            key={listing.id}
-                            listing={listing}
-                            selected={listing.id === selectedId}
-                            onClick={() => setSelectedId(prev => prev === listing.id ? null : listing.id)}
-                            onOpenDetail={() => { setDetailListing(listing); setSelectedId(listing.id); }}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                    <AnimatePresence>
+                      {showUnmapped && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: "auto", opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="mt-2 space-y-2">
+                            {sortListings(unmappedListings, sort).map((listing, i) => (
+                              <ListingCard
+                                key={listing.id}
+                                listing={listing}
+                                selected={listing.id === selectedId}
+                                index={i}
+                                onClick={() => setSelectedId(prev => prev === listing.id ? null : listing.id)}
+                                onOpenDetail={() => { setDetailListing(listing); setSelectedId(listing.id); }}
+                              />
+                            ))}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </motion.div>
                 )}
               </div>
             )}
           </div>
 
-          {error && (
-            <div className="px-4 py-2 bg-red-500/10 border-t border-red-500/20 text-xs text-red-400">{error}</div>
-          )}
+          <AnimatePresence>
+            {error && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="px-4 py-2 bg-red-500/10 border-t border-red-500/20 text-xs text-red-400"
+              >
+                {error}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
-      {detailListing && (
-        <ListingDetail
-          listing={detailListing}
-          renterProfile={renterProfile}
-          onClose={() => setDetailListing(null)}
-          onNeedProfile={(listing) => {
-            setPendingContactListing(listing);
-            setShowProfileModal(true);
-          }}
-          onOutreachStarted={() => router.push("/dashboard")}
-        />
-      )}
+      <AnimatePresence>
+        {detailListing && (
+          <ListingDetail
+            listing={detailListing}
+            renterProfile={renterProfile}
+            onClose={() => setDetailListing(null)}
+            onNeedProfile={(listing) => { setPendingContactListing(listing); setShowProfileModal(true); }}
+            onOutreachStarted={() => router.push("/dashboard")}
+          />
+        )}
+      </AnimatePresence>
 
-      {showProfileModal && (
-        <RenterProfileModal
-          existingProfile={renterProfile}
-          defaultPhone={authUser.phone}
-          onSaved={(profile) => {
-            setRenterProfile(profile);
-            setShowProfileModal(false);
-            // If they had a pending contact, reopen the detail modal
-            if (pendingContactListing) {
-              setDetailListing(pendingContactListing);
-              setPendingContactListing(null);
-            }
-          }}
-          onClose={() => { setShowProfileModal(false); setPendingContactListing(null); }}
-        />
-      )}
-
+      <AnimatePresence>
+        {showProfileModal && (
+          <RenterProfileModal
+            existingProfile={renterProfile}
+            defaultPhone={authUser.phone}
+            onSaved={(profile) => {
+              setRenterProfile(profile);
+              setShowProfileModal(false);
+              if (pendingContactListing) { setDetailListing(pendingContactListing); setPendingContactListing(null); }
+            }}
+            onClose={() => { setShowProfileModal(false); setPendingContactListing(null); }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

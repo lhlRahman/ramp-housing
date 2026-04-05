@@ -1,7 +1,5 @@
 @import "leaflet/dist/leaflet.css";
 @import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -10,58 +8,82 @@
   * {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    border-color: var(--border);
   }
 
   body {
-    background: #0A0A0A;
-    color: #F5F5F5;
+    background-color: var(--background);
+    color: var(--foreground);
   }
 
-  ::-webkit-scrollbar {
-    width: 5px;
+  :root {
+    --background: oklch(0.07 0 0);
+    --foreground: oklch(0.97 0 0);
+    --card: oklch(0.12 0 0);
+    --card-foreground: oklch(0.97 0 0);
+    --popover: oklch(0.12 0 0);
+    --popover-foreground: oklch(0.97 0 0);
+    --primary: oklch(0.91 0.19 109);
+    --primary-foreground: oklch(0.12 0 0);
+    --secondary: oklch(0.18 0 0);
+    --secondary-foreground: oklch(0.97 0 0);
+    --muted: oklch(0.18 0 0);
+    --muted-foreground: oklch(0.6 0 0);
+    --accent: oklch(0.18 0 0);
+    --accent-foreground: oklch(0.97 0 0);
+    --destructive: oklch(0.65 0.2 25);
+    --border: oklch(0.2 0 0);
+    --input: oklch(0.2 0 0);
+    --ring: oklch(0.91 0.19 109);
+    --radius: 0.75rem;
+    --chart-1: oklch(0.91 0.19 109);
+    --chart-2: oklch(0.6 0 0);
+    --chart-3: oklch(0.45 0 0);
+    --chart-4: oklch(0.35 0 0);
+    --chart-5: oklch(0.25 0 0);
+    --sidebar: oklch(0.12 0 0);
+    --sidebar-foreground: oklch(0.97 0 0);
+    --sidebar-primary: oklch(0.91 0.19 109);
+    --sidebar-primary-foreground: oklch(0.12 0 0);
+    --sidebar-accent: oklch(0.18 0 0);
+    --sidebar-accent-foreground: oklch(0.97 0 0);
+    --sidebar-border: oklch(0.2 0 0);
+    --sidebar-ring: oklch(0.91 0.19 109);
   }
-  ::-webkit-scrollbar-track {
-    background: transparent;
+
+  .theme {
+    --font-heading: var(--font-sans);
+    --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
   }
-  ::-webkit-scrollbar-thumb {
-    background: #2A2A2A;
-    border-radius: 3px;
+
+  html {
+    font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
   }
-  ::-webkit-scrollbar-thumb:hover {
-    background: #3A3A3A;
-  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2A2A2A; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3A3A3A; }
 
   /* Dark leaflet overrides */
-  .leaflet-container {
-    background: #111 !important;
-  }
-  .leaflet-tile-pane {
-    filter: brightness(0.75) contrast(1.1) saturate(0.3);
-  }
+  .leaflet-container { background: #111 !important; }
+  .leaflet-tile-pane { filter: brightness(0.75) contrast(1.1) saturate(0.3); }
   .leaflet-control-zoom a {
     background: #1A1A1A !important;
     color: #F5F5F5 !important;
     border-color: #2A2A2A !important;
   }
-  .leaflet-control-zoom a:hover {
-    background: #222 !important;
-  }
+  .leaflet-control-zoom a:hover { background: #222 !important; }
   .leaflet-popup-content-wrapper {
     background: #1A1A1A !important;
     color: #F5F5F5 !important;
     border-radius: 12px !important;
     box-shadow: 0 8px 24px rgba(0,0,0,0.5) !important;
   }
-  .leaflet-popup-tip {
-    background: #1A1A1A !important;
-  }
-  .leaflet-popup-close-button {
-    color: rgba(245,245,245,0.5) !important;
-  }
-  /* Hide geoman toolbar completely */
-  .leaflet-pm-toolbar {
-    display: none !important;
-  }
+  .leaflet-popup-tip { background: #1A1A1A !important; }
+  .leaflet-popup-close-button { color: rgba(245,245,245,0.5) !important; }
+  .leaflet-pm-toolbar { display: none !important; }
 }
 
 @layer components {
@@ -76,9 +98,7 @@
     border-color: #2A2A2A;
     color: #F5F5F5;
   }
-  .input-dark::placeholder {
-    color: rgba(245, 245, 245, 0.25);
-  }
+  .input-dark::placeholder { color: rgba(245, 245, 245, 0.25); }
   .input-dark:focus {
     outline: none;
     border-color: #EBF123;
@@ -90,16 +110,25 @@
     background: #EBF123;
     color: #0A0A0A;
   }
-  .btn-ramp:hover {
-    background: #D4DA1F;
-  }
-  .btn-ramp:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
-  }
+  .btn-ramp:hover { background: #D4DA1F; }
+  .btn-ramp:disabled { opacity: 0.3; cursor: not-allowed; }
 
   .badge-dark {
     @apply inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-full;
   }
 
+  /* Glass effect for overlays */
+  .glass {
+    background: rgba(17, 17, 17, 0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .glass-strong {
+    background: rgba(17, 17, 17, 0.92);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
 }

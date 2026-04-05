@@ -1,7 +1,9 @@
 "use client";
 import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { RenterProfile } from "@/lib/types";
 import { upsertRenterProfile } from "@/lib/api";
+import { toast } from "sonner";
 
 interface Props {
   existingProfile: RenterProfile | null;
@@ -9,6 +11,17 @@ interface Props {
   onSaved: (profile: RenterProfile) => void;
   onClose: () => void;
 }
+
+const overlayVariants = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1 },
+};
+
+const modalVariants = {
+  hidden: { opacity: 0, scale: 0.95, y: 20 },
+  visible: { opacity: 1, scale: 1, y: 0, transition: { type: "spring" as const, stiffness: 300, damping: 30 } },
+  exit: { opacity: 0, scale: 0.97, y: 10, transition: { duration: 0.15 } },
+};
 
 export default function RenterProfileModal({ existingProfile, defaultPhone, onSaved, onClose }: Props) {
   const [phone, setPhone] = useState(existingProfile?.phone || defaultPhone || "");
@@ -48,32 +61,53 @@ export default function RenterProfileModal({ existingProfile, defaultPhone, onSa
         dealbreakers: dealbreakers || null,
         free_text_context: freeText || null,
       });
+      toast.success("Profile saved");
       onSaved(profile);
     } catch (err: any) {
       setError(err.message || "Failed to save profile");
+      toast.error("Failed to save profile");
     } finally {
       setSaving(false);
     }
   };
 
-  const inputCls = "w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-ramp-lime/50 focus:ring-1 focus:ring-ramp-lime/20";
+  const inputCls = "w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-ramp-lime/50 focus:ring-1 focus:ring-ramp-lime/20 transition-all";
   const labelCls = "block text-xs font-medium text-text-secondary mb-1";
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[2000]" onClick={onClose} />
+      <motion.div
+        variants={overlayVariants}
+        initial="hidden"
+        animate="visible"
+        exit="hidden"
+        transition={{ duration: 0.2 }}
+        className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[2000]"
+        onClick={onClose}
+      />
       <div className="fixed inset-0 z-[2001] flex items-center justify-center p-6 pointer-events-none">
-        <div className="bg-surface-1 rounded-2xl shadow-2xl border border-border w-full max-w-[520px] max-h-[85vh] flex flex-col overflow-hidden pointer-events-auto">
+        <motion.div
+          variants={modalVariants}
+          initial="hidden"
+          animate="visible"
+          exit="exit"
+          className="bg-surface-1 rounded-2xl shadow-2xl border border-border-light w-full max-w-[520px] max-h-[85vh] flex flex-col overflow-hidden pointer-events-auto"
+        >
           <div className="px-6 py-4 border-b border-border flex items-center justify-between">
             <div>
-              <h2 className="text-lg font-bold text-text-primary">Your Profile</h2>
+              <h2 className="text-lg font-bold text-text-primary tracking-tight">Your Profile</h2>
               <p className="text-xs text-text-muted mt-0.5">Help the agent represent you to landlords</p>
             </div>
-            <button onClick={onClose} className="w-8 h-8 rounded-full bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text-primary flex items-center justify-center transition-colors">
+            <motion.button
+              onClick={onClose}
+              className="w-8 h-8 rounded-full bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text-primary flex items-center justify-center transition-colors"
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
+            >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
-            </button>
+            </motion.button>
           </div>
 
           <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4">
@@ -122,13 +156,13 @@ export default function RenterProfileModal({ existingProfile, defaultPhone, onSa
             </div>
 
             <div className="flex gap-6">
-              <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+              <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer group">
                 <input type="checkbox" checked={smoker} onChange={e => setSmoker(e.target.checked)} className="rounded border-border bg-surface-2 text-ramp-lime focus:ring-ramp-lime/20" />
-                Smoker
+                <span className="group-hover:text-text-primary transition-colors">Smoker</span>
               </label>
-              <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+              <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer group">
                 <input type="checkbox" checked={guarantor} onChange={e => setGuarantor(e.target.checked)} className="rounded border-border bg-surface-2 text-ramp-lime focus:ring-ramp-lime/20" />
-                Has Guarantor
+                <span className="group-hover:text-text-primary transition-colors">Has Guarantor</span>
               </label>
             </div>
 
@@ -142,16 +176,33 @@ export default function RenterProfileModal({ existingProfile, defaultPhone, onSa
               <textarea value={freeText} onChange={e => setFreeText(e.target.value)} placeholder="I work from home, need a quiet building..." rows={3} className={inputCls + " resize-none"} />
             </div>
 
-            {error && <p className="text-xs text-red-400">{error}</p>}
+            <AnimatePresence>
+              {error && (
+                <motion.p
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="text-xs text-red-400"
+                >
+                  {error}
+                </motion.p>
+              )}
+            </AnimatePresence>
           </form>
 
           <div className="px-6 py-4 border-t border-border flex justify-end gap-3">
-            <button onClick={onClose} className="px-4 py-2 text-sm text-text-secondary hover:text-text-primary transition-colors">Cancel</button>
-            <button onClick={() => handleSubmit()} disabled={saving} className="btn-ramp px-6 py-2 text-sm disabled:opacity-50">
+            <button onClick={onClose} className="px-4 py-2 text-sm text-text-secondary hover:text-text-primary transition-colors rounded-lg">Cancel</button>
+            <motion.button
+              onClick={() => handleSubmit()}
+              disabled={saving}
+              className="btn-ramp px-6 py-2 text-sm disabled:opacity-50"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.97 }}
+            >
               {saving ? "Saving..." : "Save Profile"}
-            </button>
+            </motion.button>
           </div>
-        </div>
+        </motion.div>
       </div>
     </>
   );

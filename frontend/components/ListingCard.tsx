@@ -1,4 +1,5 @@
 "use client";
+import { motion } from "framer-motion";
 import { Listing, SOURCE_COLORS, SOURCE_LABELS } from "@/lib/types";
 
 interface Props {
@@ -6,25 +7,30 @@ interface Props {
   selected: boolean;
   onClick: () => void;
   onOpenDetail: () => void;
+  index?: number;
 }
 
-export default function ListingCard({ listing, selected, onClick, onOpenDetail }: Props) {
+export default function ListingCard({ listing, selected, onClick, onOpenDetail, index = 0 }: Props) {
   const color = SOURCE_COLORS[listing.source] || "#6b7280";
 
   const priceStr =
     listing.price_min === listing.price_max
       ? `$${listing.price_min.toLocaleString()}`
-      : `$${listing.price_min.toLocaleString()}–${listing.price_max.toLocaleString()}`;
+      : `$${listing.price_min.toLocaleString()}-${listing.price_max.toLocaleString()}`;
 
   const bedsStr = listing.bedrooms === 0 ? "Studio" : `${listing.bedrooms} BR`;
   const photo = listing.photo_url || (listing.photos && listing.photos.length > 0 ? listing.photos[0] : null);
 
   return (
-    <div
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, delay: Math.min(index * 0.03, 0.3), ease: [0.16, 1, 0.3, 1] }}
+      whileHover={{ y: -2 }}
       onClick={onClick}
       className={`group rounded-xl border transition-all cursor-pointer overflow-hidden ${
         selected
-          ? "border-ramp-lime/40 bg-ramp-lime-dim shadow-card-hover ring-1 ring-ramp-lime/20"
+          ? "border-ramp-lime/40 bg-ramp-lime-dim shadow-glow ring-1 ring-ramp-lime/20"
           : "border-border bg-surface-2 hover:border-border-hover hover:shadow-card-hover"
       }`}
     >
@@ -34,18 +40,15 @@ export default function ListingCard({ listing, selected, onClick, onOpenDetail }
           <img
             src={photo}
             alt=""
-            className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ease-out"
             loading="lazy"
             onError={(e) => { const parent = (e.target as HTMLImageElement).parentElement; if (parent) parent.style.display = "none"; }}
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
 
           {/* Source pill */}
           <div className="absolute top-2 left-2">
-            <span
-              className="badge-dark text-white shadow-sm"
-              style={{ backgroundColor: color }}
-            >
+            <span className="badge-dark text-white shadow-sm backdrop-blur-sm" style={{ backgroundColor: `${color}cc` }}>
               {SOURCE_LABELS[listing.source]}
             </span>
           </div>
@@ -58,7 +61,7 @@ export default function ListingCard({ listing, selected, onClick, onOpenDetail }
 
           {/* Price overlay */}
           <div className="absolute bottom-2 left-2">
-            <span className="text-white font-bold text-base drop-shadow-sm leading-none">
+            <span className="text-white font-bold text-base drop-shadow-md leading-none">
               {priceStr}
               <span className="text-white/60 text-[11px] font-normal ml-0.5">/mo</span>
             </span>
@@ -77,7 +80,6 @@ export default function ListingCard({ listing, selected, onClick, onOpenDetail }
           )}
         </div>
       ) : (
-        /* No photo fallback */
         <div className="flex items-center gap-2 px-3 pt-2.5">
           <span className="badge-dark text-white" style={{ backgroundColor: color }}>
             {SOURCE_LABELS[listing.source]}
@@ -96,7 +98,6 @@ export default function ListingCard({ listing, selected, onClick, onOpenDetail }
           {listing.address || listing.neighborhood}
         </p>
 
-        {/* Meta row */}
         <div className="flex items-center justify-between mt-2">
           {!photo && (
             <span className="text-base font-bold text-text-primary tracking-tight">
@@ -105,12 +106,12 @@ export default function ListingCard({ listing, selected, onClick, onOpenDetail }
           )}
           <div className={`flex items-center gap-2 text-xs text-text-secondary ${photo ? "" : "ml-auto"}`}>
             <span className="font-medium text-text-primary">{bedsStr}</span>
-            <span className="text-text-muted">·</span>
+            <span className="text-text-muted">&#183;</span>
             <span>{listing.bathrooms} BA</span>
             {listing.sqft && (
               <>
-                <span className="text-text-muted">·</span>
-                <span>{listing.sqft} ft²</span>
+                <span className="text-text-muted">&#183;</span>
+                <span>{listing.sqft} ft&#178;</span>
               </>
             )}
           </div>
@@ -118,18 +119,19 @@ export default function ListingCard({ listing, selected, onClick, onOpenDetail }
 
         {listing.available_from && (
           <p className="text-[11px] text-text-muted mt-1.5">
-            Available {listing.available_from}{listing.available_to ? ` → ${listing.available_to}` : "+"}
+            Available {listing.available_from}{listing.available_to ? ` \u2192 ${listing.available_to}` : "+"}
           </p>
         )}
 
         {/* Actions */}
         <div className="flex items-center gap-1 mt-2 pt-2 border-t border-border">
-          <button
+          <motion.button
             onClick={(e) => { e.stopPropagation(); onOpenDetail(); }}
             className="flex-1 text-xs font-medium text-ramp-lime hover:text-ramp-lime-hover hover:bg-ramp-lime-dim rounded-lg py-1.5 transition-colors text-center"
+            whileTap={{ scale: 0.97 }}
           >
             Details
-          </button>
+          </motion.button>
           <span className="w-px h-4 bg-border" />
           <a
             href={listing.url}
@@ -138,10 +140,10 @@ export default function ListingCard({ listing, selected, onClick, onOpenDetail }
             onClick={(e) => e.stopPropagation()}
             className="flex-1 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-surface-3 rounded-lg py-1.5 transition-colors text-center"
           >
-            Source ↗
+            Source &#8599;
           </a>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }

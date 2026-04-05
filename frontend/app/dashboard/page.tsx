@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 import { OutreachItem, OUTREACH_STATUS_LABELS, OUTREACH_STATUS_COLORS, SOURCE_LABELS } from "@/lib/types";
 import { getOutreachDashboard, getAuthToken, getMe } from "@/lib/api";
 
@@ -25,6 +26,15 @@ function formatTime(ts: number): string {
   return new Date(ts * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
+const cardVariants = {
+  hidden: { opacity: 0, y: 12 },
+  visible: (i: number) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: Math.min(i * 0.05, 0.3), duration: 0.3, ease: [0.16, 1, 0.3, 1] as [number, number, number, number] },
+  }),
+};
+
 export default function DashboardPage() {
   const router = useRouter();
   const [items, setItems] = useState<OutreachWithEvents[]>([]);
@@ -36,17 +46,12 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const token = getAuthToken();
-    if (!token) {
-      router.replace("/");
-      return;
-    }
+    if (!token) { router.replace("/"); return; }
     getMe().then((data) => {
       setRenterPhone(data.phone);
       setProfileHydrated(true);
       setLoading(false);
-    }).catch(() => {
-      router.replace("/");
-    });
+    }).catch(() => { router.replace("/"); });
   }, [router]);
 
   const refresh = useCallback(async () => {
@@ -85,10 +90,14 @@ export default function DashboardPage() {
   if (profileHydrated && !renterPhone) {
     return (
       <div className="min-h-screen bg-surface-0 flex items-center justify-center">
-        <div className="text-center space-y-3">
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="text-center space-y-3"
+        >
           <p className="text-text-muted text-sm">No profile found. Set up your profile first.</p>
           <button onClick={() => router.push("/")} className="btn-ramp text-sm px-6 py-2">Go to Search</button>
-        </div>
+        </motion.div>
       </div>
     );
   }
@@ -96,40 +105,74 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen bg-surface-0">
       {/* Header */}
-      <div className="border-b border-border bg-surface-1">
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="border-b border-border bg-surface-1/80 backdrop-blur-xl sticky top-0 z-10"
+      >
         <div className="max-w-[900px] mx-auto px-6 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-bold text-text-primary">Outreach Dashboard</h1>
+            <h1 className="text-xl font-bold text-text-primary tracking-tight">Outreach Dashboard</h1>
             <p className="text-xs text-text-muted mt-0.5">{items.length} conversation{items.length !== 1 ? "s" : ""} tracked</p>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={refresh} className="w-9 h-9 rounded-full bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text-primary flex items-center justify-center transition-colors">
-              <svg className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <motion.button
+              onClick={refresh}
+              className="w-9 h-9 rounded-full bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text-primary flex items-center justify-center transition-colors"
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.9 }}
+            >
+              <motion.svg
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+                animate={loading ? { rotate: 360 } : {}}
+                transition={loading ? { duration: 1, repeat: Infinity, ease: "linear" } : {}}
+              >
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182" />
-              </svg>
-            </button>
-            <button onClick={() => router.push("/")} className="btn-ramp text-xs px-4 py-2 flex items-center gap-1.5">
+              </motion.svg>
+            </motion.button>
+            <motion.button
+              onClick={() => router.push("/")}
+              className="btn-ramp text-xs px-4 py-2 flex items-center gap-1.5"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.97 }}
+            >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
               </svg>
               Back to Search
-            </button>
+            </motion.button>
           </div>
         </div>
-      </div>
+      </motion.div>
 
       {/* Status pills */}
-      {Object.keys(statusCounts).length > 0 && (
-        <div className="max-w-[900px] mx-auto px-6 py-3 flex flex-wrap gap-2">
-          {Object.entries(statusCounts).map(([status, count]) => (
-            <span key={status} className="flex items-center gap-1.5 text-xs bg-surface-2 border border-border rounded-full px-3 py-1">
-              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: OUTREACH_STATUS_COLORS[status] || "#6b7280" }} />
-              <span className="text-text-secondary">{OUTREACH_STATUS_LABELS[status] || status}</span>
-              <span className="font-semibold text-text-primary">{count}</span>
-            </span>
-          ))}
-        </div>
-      )}
+      <AnimatePresence>
+        {Object.keys(statusCounts).length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="max-w-[900px] mx-auto px-6 py-3 flex flex-wrap gap-2"
+          >
+            {Object.entries(statusCounts).map(([status, count], i) => (
+              <motion.span
+                key={status}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: i * 0.05 }}
+                className="flex items-center gap-1.5 text-xs bg-surface-2 border border-border rounded-full px-3 py-1"
+              >
+                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: OUTREACH_STATUS_COLORS[status] || "#6b7280" }} />
+                <span className="text-text-secondary">{OUTREACH_STATUS_LABELS[status] || status}</span>
+                <span className="font-semibold text-text-primary">{count}</span>
+              </motion.span>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {error && (
         <div className="max-w-[900px] mx-auto px-6 py-2">
@@ -144,26 +187,40 @@ export default function DashboardPage() {
             <div className="w-6 h-6 rounded-full border-2 border-surface-4 border-t-ramp-lime animate-spin" />
           </div>
         ) : items.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-40 text-center">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex flex-col items-center justify-center h-40 text-center"
+          >
             <p className="text-sm text-text-muted">No outreach yet. Open a listing and hit Agent Call or Agent Text to get started.</p>
-          </div>
+          </motion.div>
         ) : (
           <div className="space-y-3">
-            {items.map(item => {
+            {items.map((item, i) => {
               const callResult = getCallResult(item);
               const isExpanded = expandedId === item.outreach_id;
 
               return (
-                <div
+                <motion.div
                   key={item.outreach_id}
-                  className="bg-surface-1 border border-border rounded-xl hover:border-surface-4 transition-colors cursor-pointer overflow-hidden"
+                  custom={i}
+                  variants={cardVariants}
+                  initial="hidden"
+                  animate="visible"
+                  className="bg-surface-1 border border-border rounded-xl hover:border-border-hover transition-colors cursor-pointer overflow-hidden"
                   onClick={() => setExpandedId(isExpanded ? null : item.outreach_id)}
+                  whileHover={{ y: -1 }}
                 >
                   <div className="px-5 py-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
-                          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: OUTREACH_STATUS_COLORS[item.status] || "#6b7280" }} />
+                          <motion.span
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: OUTREACH_STATUS_COLORS[item.status] || "#6b7280" }}
+                            animate={item.status === "contacted" ? { scale: [1, 1.3, 1] } : {}}
+                            transition={item.status === "contacted" ? { duration: 2, repeat: Infinity } : {}}
+                          />
                           <h3 className="text-sm font-semibold text-text-primary truncate">{item.listing?.title || "Unknown listing"}</h3>
                         </div>
                         <p className="text-xs text-text-muted truncate">{item.listing?.address || item.listing?.neighborhood || ""}</p>
@@ -191,9 +248,17 @@ export default function DashboardPage() {
                             {callResult.sentiment}
                           </span>
                         )}
-                        <svg className={`w-3 h-3 text-text-muted transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <motion.svg
+                          className="w-3 h-3 text-text-muted"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={2}
+                          animate={{ rotate: isExpanded ? 180 : 0 }}
+                          transition={{ duration: 0.2 }}
+                        >
                           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                        </svg>
+                        </motion.svg>
                       </div>
                     </div>
 
@@ -202,88 +267,103 @@ export default function DashboardPage() {
                     )}
                   </div>
 
-                  {isExpanded && (
-                    <div className="px-5 pb-4 space-y-3 border-t border-border pt-3">
-                      {callResult && (
-                        <div className="flex items-center gap-3 text-xs">
-                          {callResult.duration_ms && (
-                            <span className="text-text-muted">Duration: {Math.round(callResult.duration_ms / 1000)}s</span>
+                  <AnimatePresence>
+                    {isExpanded && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+                        className="overflow-hidden"
+                      >
+                        <div className="px-5 pb-4 space-y-3 border-t border-border pt-3">
+                          {callResult && (
+                            <div className="flex items-center gap-3 text-xs">
+                              {callResult.duration_ms && (
+                                <span className="text-text-muted">Duration: {Math.round(callResult.duration_ms / 1000)}s</span>
+                              )}
+                              {callResult.recording_url && (
+                                <a href={callResult.recording_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="text-ramp-lime hover:text-ramp-lime-hover flex items-center gap-1">
+                                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+                                  </svg>
+                                  Listen to recording
+                                </a>
+                              )}
+                            </div>
                           )}
-                          {callResult.recording_url && (
-                            <a href={callResult.recording_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="text-ramp-lime hover:text-ramp-lime-hover flex items-center gap-1">
-                              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
-                              </svg>
-                              Listen to recording
-                            </a>
-                          )}
-                        </div>
-                      )}
 
-                      {callResult?.transcript && (
-                        <div>
-                          <h4 className="text-[10px] font-semibold text-text-primary uppercase tracking-wider mb-1.5">Transcript</h4>
-                          <div className="bg-surface-2 border border-border rounded-lg px-3 py-2 max-h-[300px] overflow-y-auto">
-                            <pre className="text-xs text-text-secondary whitespace-pre-wrap font-sans leading-relaxed">{callResult.transcript}</pre>
-                          </div>
-                        </div>
-                      )}
-
-                      {item.scam_flags && (
-                        <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-                          Scam flags: {item.scam_flags}
-                        </p>
-                      )}
-                      {item.negotiation_result && (
-                        <p className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
-                          Negotiation: {item.negotiation_result}
-                        </p>
-                      )}
-                      {item.tour_time && (
-                        <p className="text-xs text-violet-400 bg-violet-500/10 border border-violet-500/20 rounded-lg px-3 py-2">
-                          Tour: {item.tour_time}
-                        </p>
-                      )}
-
-                      {item.channel === "text" && item.events && item.events.some(e => ["contacted", "sms_reply", "sms_sent", "followup_sent"].includes(e.event_type)) && (
-                        <div>
-                          <h4 className="text-[10px] font-semibold text-text-primary uppercase tracking-wider mb-1.5">Messages</h4>
-                          <div className="bg-surface-2 border border-border rounded-lg px-3 py-2 space-y-2 max-h-[300px] overflow-y-auto">
-                            {item.events
-                              .filter(e => ["contacted", "sms_reply", "sms_sent", "followup_sent"].includes(e.event_type))
-                              .map(ev => {
-                                const d = parseEventDetail(ev.detail);
-                                const msgBody = d?.body || "";
-                                const isUs = ev.event_type === "contacted" || ev.event_type === "sms_sent" || ev.event_type === "followup_sent";
-                                return (
-                                  <div key={ev.event_id} className={`flex ${isUs ? "justify-end" : "justify-start"}`}>
-                                    <div className={`max-w-[80%] rounded-lg px-3 py-1.5 ${isUs ? "bg-ramp-lime/15 text-text-primary" : "bg-surface-3 text-text-primary"}`}>
-                                      <p className="text-xs">{msgBody}</p>
-                                      <p className="text-[9px] text-text-muted mt-0.5">{formatTime(ev.created_at)}</p>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                          </div>
-                        </div>
-                      )}
-
-                      {item.events && item.events.filter(e => !["call_ended", "contacted", "sms_reply", "sms_sent", "followup_sent", "analysis", "auto_reply_skipped", "auto_reply_capped", "sms_reply_ignored", "auto_ghosted"].includes(e.event_type)).length > 0 && (
-                        <div>
-                          <h4 className="text-[10px] font-semibold text-text-primary uppercase tracking-wider mb-1.5">Timeline</h4>
-                          <div className="space-y-1">
-                            {item.events.filter(e => !["call_ended", "contacted", "sms_reply", "sms_sent", "followup_sent", "analysis", "auto_reply_skipped", "auto_reply_capped", "sms_reply_ignored", "auto_ghosted"].includes(e.event_type)).map(ev => (
-                              <div key={ev.event_id} className="flex items-center gap-2 text-[10px]">
-                                <span className="text-text-muted w-[100px] shrink-0">{formatTime(ev.created_at)}</span>
-                                <span className="text-text-secondary">{ev.event_type}</span>
+                          {callResult?.transcript && (
+                            <div>
+                              <h4 className="text-[10px] font-semibold text-text-primary uppercase tracking-wider mb-1.5">Transcript</h4>
+                              <div className="bg-surface-2 border border-border rounded-lg px-3 py-2 max-h-[300px] overflow-y-auto">
+                                <pre className="text-xs text-text-secondary whitespace-pre-wrap font-sans leading-relaxed">{callResult.transcript}</pre>
                               </div>
-                            ))}
-                          </div>
+                            </div>
+                          )}
+
+                          {item.scam_flags && (
+                            <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
+                              Scam flags: {item.scam_flags}
+                            </p>
+                          )}
+                          {item.negotiation_result && (
+                            <p className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+                              Negotiation: {item.negotiation_result}
+                            </p>
+                          )}
+                          {item.tour_time && (
+                            <p className="text-xs text-violet-400 bg-violet-500/10 border border-violet-500/20 rounded-lg px-3 py-2">
+                              Tour: {item.tour_time}
+                            </p>
+                          )}
+
+                          {item.channel === "text" && item.events && item.events.some(e => ["contacted", "sms_reply", "sms_sent", "followup_sent"].includes(e.event_type)) && (
+                            <div>
+                              <h4 className="text-[10px] font-semibold text-text-primary uppercase tracking-wider mb-1.5">Messages</h4>
+                              <div className="bg-surface-2 border border-border rounded-lg px-3 py-2 space-y-2 max-h-[300px] overflow-y-auto">
+                                {item.events
+                                  .filter(e => ["contacted", "sms_reply", "sms_sent", "followup_sent"].includes(e.event_type))
+                                  .map(ev => {
+                                    const d = parseEventDetail(ev.detail);
+                                    const msgBody = d?.body || "";
+                                    const isUs = ev.event_type === "contacted" || ev.event_type === "sms_sent" || ev.event_type === "followup_sent";
+                                    return (
+                                      <motion.div
+                                        key={ev.event_id}
+                                        className={`flex ${isUs ? "justify-end" : "justify-start"}`}
+                                        initial={{ opacity: 0, y: 4 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                      >
+                                        <div className={`max-w-[80%] rounded-lg px-3 py-1.5 ${isUs ? "bg-ramp-lime/15 text-text-primary" : "bg-surface-3 text-text-primary"}`}>
+                                          <p className="text-xs">{msgBody}</p>
+                                          <p className="text-[9px] text-text-muted mt-0.5">{formatTime(ev.created_at)}</p>
+                                        </div>
+                                      </motion.div>
+                                    );
+                                  })}
+                              </div>
+                            </div>
+                          )}
+
+                          {item.events && item.events.filter(e => !["call_ended", "contacted", "sms_reply", "sms_sent", "followup_sent", "analysis", "auto_reply_skipped", "auto_reply_capped", "sms_reply_ignored", "auto_ghosted"].includes(e.event_type)).length > 0 && (
+                            <div>
+                              <h4 className="text-[10px] font-semibold text-text-primary uppercase tracking-wider mb-1.5">Timeline</h4>
+                              <div className="space-y-1">
+                                {item.events.filter(e => !["call_ended", "contacted", "sms_reply", "sms_sent", "followup_sent", "analysis", "auto_reply_skipped", "auto_reply_capped", "sms_reply_ignored", "auto_ghosted"].includes(e.event_type)).map(ev => (
+                                  <div key={ev.event_id} className="flex items-center gap-2 text-[10px]">
+                                    <span className="text-text-muted w-[100px] shrink-0">{formatTime(ev.created_at)}</span>
+                                    <span className="text-text-secondary">{ev.event_type}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
               );
             })}
           </div>
