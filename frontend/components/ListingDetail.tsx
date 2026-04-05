@@ -272,12 +272,16 @@ export default function ListingDetail({ listing, renterProfile, onClose, onNeedP
                   )}
                 </div>
 
-                {(listing.description || detail?.description) && (
-                  <div>
-                    <h3 className="text-[11px] font-semibold text-text-primary uppercase tracking-wider mb-2">About</h3>
-                    <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-line line-clamp-[8]">{listing.description || detail?.description}</p>
-                  </div>
-                )}
+                {(() => {
+                  const desc = listing.description || detail?.description || "";
+                  const junk = /Photos?\d|Tours?\d|View all|Check availability|Use two fingers|scroll to zoom|Street view|Directions\n/i;
+                  return desc && desc.length > 30 && !junk.test(desc) ? (
+                    <div>
+                      <h3 className="text-[11px] font-semibold text-text-primary uppercase tracking-wider mb-2">About</h3>
+                      <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-line line-clamp-[8]">{desc}</p>
+                    </div>
+                  ) : null;
+                })()}
 
                 {allAmenities.length > 0 && (
                   <div>
