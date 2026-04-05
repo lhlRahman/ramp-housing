@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import FiltersBar from "@/components/FiltersBar";
@@ -47,6 +47,35 @@ export default function Home() {
 
   const mapCenter: [number, number] = [40.7128, -74.006];
   const mapZoom = 12;
+
+  // Resizable sidebar
+  const [sidebarWidth, setSidebarWidth] = useState(420);
+  const dragging = useRef(false);
+  const dragStartX = useRef(0);
+  const dragStartWidth = useRef(420);
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    dragging.current = true;
+    dragStartX.current = e.clientX;
+    dragStartWidth.current = sidebarWidth;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (e: MouseEvent) => {
+      if (!dragging.current) return;
+      const delta = dragStartX.current - e.clientX;
+      setSidebarWidth(Math.min(700, Math.max(280, dragStartWidth.current + delta)));
+    };
+    const onUp = () => {
+      dragging.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [sidebarWidth]);
 
   const {
     filters, setFilters, applyParsedFilters, setManualSources,
@@ -213,7 +242,13 @@ export default function Home() {
           )}
         </div>
 
-        <div className="w-[420px] shrink-0 flex flex-col bg-surface-1 border-l border-border overflow-hidden">
+        {/* Drag handle */}
+        <div
+          onMouseDown={onDragStart}
+          className="w-1 shrink-0 bg-border hover:bg-ramp-lime/60 cursor-col-resize transition-colors active:bg-ramp-lime"
+        />
+
+        <div className="shrink-0 flex flex-col bg-surface-1 border-l border-border overflow-hidden" style={{ width: sidebarWidth }}>
           <div className="px-5 py-3 border-b border-border flex items-center justify-between">
             <div>
               <h2 className="text-sm font-semibold text-text-primary tracking-tight">
