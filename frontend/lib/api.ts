@@ -3,6 +3,22 @@ import { Listing, SearchFilters, SearchResult, ListingDetail, SourceStatus, Rent
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const WS_BASE = API_BASE.replace(/^http/, "ws");
 
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("auth_token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+async function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  const headers = authHeaders(
+    init?.body ? { "Content-Type": "application/json" } : undefined,
+  );
+  return fetch(url, { ...init, headers: { ...headers, ...init?.headers } });
+}
+
 export interface SearchCallbacks {
   onInit: (detectedLocation: string, availableSources: string[]) => void;
   onListings: (listings: Listing[], source: string) => void;
@@ -61,9 +77,8 @@ export function searchListingsWS(
 }
 
 export async function parseFilters(prompt: string): Promise<{ filters: Partial<SearchFilters>; summary: string }> {
-  const resp = await fetch(`${API_BASE}/api/parse-filters`, {
+  const resp = await authFetch(`${API_BASE}/api/parse-filters`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt }),
   });
   if (!resp.ok) throw new Error(`Parse error: ${resp.status}`);
@@ -72,7 +87,7 @@ export async function parseFilters(prompt: string): Promise<{ filters: Partial<S
 
 export async function fetchListingDetail(url: string): Promise<ListingDetail> {
   const params = new URLSearchParams({ url });
-  const resp = await fetch(`${API_BASE}/api/listing/detail?${params}`);
+  const resp = await authFetch(`${API_BASE}/api/listing/detail?${params}`);
   if (!resp.ok) throw new Error(`API error: ${resp.status}`);
   return resp.json();
 }
@@ -80,9 +95,8 @@ export async function fetchListingDetail(url: string): Promise<ListingDetail> {
 // ── Renter Profile ──────────────────────────────────────────────
 
 export async function upsertRenterProfile(profile: Partial<RenterProfile> & { phone: string }): Promise<RenterProfile> {
-  const resp = await fetch(`${API_BASE}/api/renter/profile`, {
+  const resp = await authFetch(`${API_BASE}/api/renter/profile`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(profile),
   });
   if (!resp.ok) throw new Error(`Profile error: ${resp.status}`);
@@ -91,7 +105,7 @@ export async function upsertRenterProfile(profile: Partial<RenterProfile> & { ph
 }
 
 export async function getRenterProfile(phone: string): Promise<RenterProfile | null> {
-  const resp = await fetch(`${API_BASE}/api/renter/profile/${encodeURIComponent(phone)}`);
+  const resp = await authFetch(`${API_BASE}/api/renter/profile/${encodeURIComponent(phone)}`);
   if (resp.status === 404) return null;
   if (!resp.ok) throw new Error(`Profile error: ${resp.status}`);
   return resp.json();
@@ -107,9 +121,8 @@ export interface StartOutreachParams {
 }
 
 export async function startOutreach(params: StartOutreachParams): Promise<OutreachItem[]> {
-  const resp = await fetch(`${API_BASE}/api/outreach/start`, {
+  const resp = await authFetch(`${API_BASE}/api/outreach/start`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
   });
   if (!resp.ok) throw new Error(`Outreach error: ${resp.status}`);
@@ -118,13 +131,13 @@ export async function startOutreach(params: StartOutreachParams): Promise<Outrea
 }
 
 export async function getOutreachDashboard(phone: string): Promise<{ count: number; outreach: OutreachItem[] }> {
-  const resp = await fetch(`${API_BASE}/api/outreach/dashboard/${encodeURIComponent(phone)}`);
+  const resp = await authFetch(`${API_BASE}/api/outreach/dashboard/${encodeURIComponent(phone)}`);
   if (!resp.ok) throw new Error(`Dashboard error: ${resp.status}`);
   return resp.json();
 }
 
 export async function getOutreachDetail(outreachId: string): Promise<OutreachItem & { events: any[] }> {
-  const resp = await fetch(`${API_BASE}/api/outreach/${encodeURIComponent(outreachId)}`);
+  const resp = await authFetch(`${API_BASE}/api/outreach/${encodeURIComponent(outreachId)}`);
   if (!resp.ok) throw new Error(`Outreach error: ${resp.status}`);
   return resp.json();
 }
@@ -143,6 +156,7 @@ export function setAuthToken(token: string) {
 export function clearAuth() {
   localStorage.removeItem("auth_token");
   localStorage.removeItem("auth_user");
+  localStorage.removeItem("renter_profile");
 }
 
 export async function sendOTP(phone: string): Promise<void> {
@@ -173,9 +187,14 @@ export async function verifyOTP(phone: string, code: string): Promise<{ token: s
 export async function getMe(): Promise<{ user_id: string; phone: string; name: string | null; profile: RenterProfile | null }> {
   const token = getAuthToken();
   if (!token) throw new Error("Not authenticated");
-  const resp = await fetch(`${API_BASE}/api/auth/me`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const resp = await authFetch(`${API_BASE}/api/auth/me`);
   if (!resp.ok) throw new Error(`Auth error: ${resp.status}`);
   return resp.json();
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await authFetch(`${API_BASE}/api/auth/logout`, { method: "POST" });
+  } catch { /* ignore */ }
+  clearAuth();
 }

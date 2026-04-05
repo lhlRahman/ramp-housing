@@ -212,6 +212,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,
+    allow_origin_regex=config.CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -952,9 +953,9 @@ class VerifyOTPRequest(BaseModel):
 @app.post("/api/auth/send-otp")
 async def auth_send_otp(body: SendOTPRequest) -> dict[str, Any]:
     phone = _clean_phone(body.phone)
-    # Generate 6-digit code
-    import random
-    code = f"{random.randint(0, 999999):06d}"
+    # Generate 6-digit code (cryptographically secure)
+    import secrets
+    code = f"{secrets.randbelow(1000000):06d}"
     db.store_otp(phone, code)
     # Send via Twilio
     try:
@@ -1000,6 +1001,20 @@ async def auth_me(request: Request) -> dict[str, Any]:
     }
 
 
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request) -> dict[str, Any]:
+    auth = request.headers.get("Authorization", "")
+    token = auth.removeprefix("Bearer ").strip()
+    if token:
+        conn = db.get_conn()
+        try:
+            conn.execute("DELETE FROM auth_sessions WHERE token = ?", (token,))
+            conn.commit()
+        finally:
+            conn.close()
+    return {"ok": True}
+
+
 # ── Renter Profile ──────────────────────────────────────────────────────
 VALID_OUTREACH_STATUSES = {
     "pending", "contacted", "responded", "touring",
@@ -1023,8 +1038,12 @@ class RenterProfileRequest(BaseModel):
 
 
 @app.post("/api/renter/profile")
-async def api_upsert_renter_profile(body: RenterProfileRequest) -> dict[str, Any]:
+async def api_upsert_renter_profile(request: Request, body: RenterProfileRequest) -> dict[str, Any]:
+    user = _require_user(request)
     cleaned_phone = _clean_phone(body.phone)
+    # Users can only update their own profile
+    if cleaned_phone != user["phone"]:
+        raise HTTPException(status_code=403, detail="Cannot modify another user's profile")
     profile = upsert_renter_profile(
         phone=cleaned_phone,
         name=body.name,
@@ -1043,8 +1062,12 @@ async def api_upsert_renter_profile(body: RenterProfileRequest) -> dict[str, Any
 
 
 @app.get("/api/renter/profile/{phone}")
-async def api_get_renter_profile(phone: str) -> dict[str, Any]:
-    profile = get_renter_profile(phone)
+async def api_get_renter_profile(request: Request, phone: str) -> dict[str, Any]:
+    user = _require_user(request)
+    cleaned = _clean_phone(phone)
+    if cleaned != user["phone"]:
+        raise HTTPException(status_code=403, detail="Cannot view another user's profile")
+    profile = get_renter_profile(cleaned)
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found")
     return profile
@@ -1237,9 +1260,12 @@ async def _build_sms_parts(dyn_vars: dict[str, str]) -> list[str]:
 
 
 @app.post("/api/outreach/start")
-async def api_start_outreach(body: StartOutreachRequest) -> dict[str, Any]:
+async def api_start_outreach(request: Request, body: StartOutreachRequest) -> dict[str, Any]:
     """Start parallel outreach to multiple landlords on behalf of the renter."""
+    user = _require_user(request)
     cleaned_phone = _clean_phone(body.renter_phone)
+    if cleaned_phone != user["phone"]:
+        raise HTTPException(status_code=403, detail="Cannot start outreach for another user")
     profile = get_renter_profile(cleaned_phone)
     if not profile:
         raise HTTPException(status_code=400, detail="Renter profile required before outreach")
@@ -1632,9 +1658,12 @@ def _extract_sms_body(detail: str | None) -> str:
 
 
 @app.get("/api/outreach/dashboard/{phone}")
-async def api_outreach_dashboard(phone: str) -> dict[str, Any]:
+async def api_outreach_dashboard(request: Request, phone: str) -> dict[str, Any]:
     """Get all outreach for a renter — the dashboard view with events."""
+    user = _require_user(request)
     phone = phone.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")","").replace("+","")
+    if phone != user["phone"]:
+        raise HTTPException(status_code=403, detail="Cannot view another user's outreach")
     items = list_outreach_for_renter(phone)
     if items:
         events_map = batch_list_outreach_events([i["outreach_id"] for i in items])
@@ -1644,10 +1673,13 @@ async def api_outreach_dashboard(phone: str) -> dict[str, Any]:
 
 
 @app.get("/api/outreach/{outreach_id}")
-async def api_get_outreach(outreach_id: str) -> dict[str, Any]:
+async def api_get_outreach(request: Request, outreach_id: str) -> dict[str, Any]:
+    user = _require_user(request)
     record = get_outreach(outreach_id)
     if not record:
         raise HTTPException(status_code=404, detail="Outreach not found")
+    if record.get("renter_phone") != user["phone"]:
+        raise HTTPException(status_code=403, detail="Not your outreach")
     record["events"] = list_outreach_events(outreach_id)
     return record
 

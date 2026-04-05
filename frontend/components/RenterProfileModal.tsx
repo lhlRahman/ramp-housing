@@ -80,7 +80,7 @@ export default function RenterProfileModal({ existingProfile, defaultPhone, onSa
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className={labelCls}>Phone *</label>
-                <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1234567890" className={inputCls} required disabled={!!existingProfile} />
+                <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1234567890" className={inputCls} required disabled={!!existingProfile || !!defaultPhone} />
               </div>
               <div>
                 <label className={labelCls}>Name</label>

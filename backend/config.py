@@ -16,6 +16,8 @@ CORS_ORIGINS = [
         "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001",
     ).split(",")
 ]
+# Also allow any Vercel preview/production URLs
+CORS_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX", r"https://.*\.vercel\.app")
 
 # Database
 DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "geocache.db"))

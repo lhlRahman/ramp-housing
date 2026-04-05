@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { OutreachItem, OUTREACH_STATUS_LABELS, OUTREACH_STATUS_COLORS, SOURCE_LABELS } from "@/lib/types";
-import { getOutreachDashboard } from "@/lib/api";
+import { getOutreachDashboard, getAuthToken, getMe } from "@/lib/api";
 
 interface OutreachEvent {
   event_id: number;
@@ -35,16 +35,19 @@ export default function DashboardPage() {
   const [profileHydrated, setProfileHydrated] = useState(false);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("renter_profile");
-      setRenterPhone(stored ? JSON.parse(stored).phone : null);
-    } catch {
-      setRenterPhone(null);
-    } finally {
+    const token = getAuthToken();
+    if (!token) {
+      router.replace("/");
+      return;
+    }
+    getMe().then((data) => {
+      setRenterPhone(data.phone);
       setProfileHydrated(true);
       setLoading(false);
-    }
-  }, []);
+    }).catch(() => {
+      router.replace("/");
+    });
+  }, [router]);
 
   const refresh = useCallback(async () => {
     if (!renterPhone) return;

@@ -8,7 +8,7 @@ import ListingDetail from "@/components/ListingDetail";
 import RenterProfileModal from "@/components/RenterProfileModal";
 import LoginScreen from "@/components/LoginScreen";
 import { Listing, RenterProfile, SortOption, SOURCE_LABELS, SOURCE_COLORS, AuthUser } from "@/lib/types";
-import { getRenterProfile, getAuthToken, getMe, clearAuth } from "@/lib/api";
+import { getRenterProfile, getAuthToken, getMe, clearAuth, logout } from "@/lib/api";
 import { useSearchFilters } from "@/hooks/useSearchFilters";
 import { usePromptFilters } from "@/hooks/usePromptFilters";
 import { useHousingSearch } from "@/hooks/useHousingSearch";
@@ -63,7 +63,7 @@ export default function Home() {
     return <LoginScreen onLogin={(user) => { setAuthUser(user); }} />;
   }
 
-  return <AuthenticatedApp authUser={authUser} onLogout={() => { clearAuth(); setAuthUser(null); }} />;
+  return <AuthenticatedApp authUser={authUser} onLogout={() => { logout(); setAuthUser(null); }} />;
 }
 
 function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout: () => void }) {
