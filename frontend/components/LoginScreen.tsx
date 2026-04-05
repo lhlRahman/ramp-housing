@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { sendOTP, verifyOTP, setAuthToken } from "@/lib/api";
+import { sendOTP, verifyOTP, setAuthToken, getMe } from "@/lib/api";
 import { AuthUser } from "@/lib/types";
 
 interface LoginScreenProps {
@@ -11,7 +11,9 @@ interface LoginScreenProps {
 export default function LoginScreen({ onLogin }: LoginScreenProps) {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
-  const [step, setStep] = useState<"phone" | "otp">("phone");
+  const [name, setName] = useState("");
+  const [step, setStep] = useState<"phone" | "otp" | "name">("phone");
+  const [pendingUser, setPendingUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -37,9 +39,35 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
       const { token, user } = await verifyOTP(phone.trim(), code);
       setAuthToken(token);
       localStorage.setItem("auth_user", JSON.stringify(user));
-      onLogin(user);
+      if (!user.name) {
+        setPendingUser(user);
+        setStep("name");
+      } else {
+        onLogin(user);
+      }
     } catch (err: any) {
       setError(err.message || "Invalid code");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSetName = async () => {
+    if (!name.trim() || !pendingUser) return;
+    setLoading(true);
+    setError("");
+    try {
+      const resp = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/auth/update-name`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("auth_token")}` },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      if (!resp.ok) throw new Error("Failed to save name");
+      const updatedUser = { ...pendingUser, name: name.trim() };
+      localStorage.setItem("auth_user", JSON.stringify(updatedUser));
+      onLogin(updatedUser);
+    } catch (err: any) {
+      setError(err.message || "Failed to save name");
     } finally {
       setLoading(false);
     }
@@ -54,7 +82,27 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
         </div>
 
         <div className="bg-surface-1 rounded-2xl border border-border p-6 shadow-lg">
-          {step === "phone" ? (
+          {step === "name" ? (
+            <>
+              <label className="block text-xs text-text-secondary mb-2 font-medium">What should we call you?</label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Your name"
+                className="w-full px-4 py-3 rounded-xl bg-surface-0 border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-ramp-lime/50 text-sm"
+                onKeyDown={(e) => e.key === "Enter" && handleSetName()}
+                autoFocus
+              />
+              <button
+                onClick={handleSetName}
+                disabled={loading || !name.trim()}
+                className="w-full mt-4 py-3 rounded-xl bg-ramp-lime text-surface-0 font-semibold text-sm hover:bg-ramp-lime/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {loading ? "Saving..." : "Continue"}
+              </button>
+            </>
+          ) : step === "phone" ? (
             <>
               <label className="block text-xs text-text-secondary mb-2 font-medium">Phone number</label>
               <input

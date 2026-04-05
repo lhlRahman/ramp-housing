@@ -1001,6 +1001,23 @@ async def auth_me(request: Request) -> dict[str, Any]:
     }
 
 
+class UpdateNameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+@app.post("/api/auth/update-name")
+async def auth_update_name(request: Request, body: UpdateNameRequest) -> dict[str, Any]:
+    user = _require_user(request)
+    clean_name = body.name.strip()
+    db.update_user_name(user["user_id"], clean_name)
+    # Also update renter profile name if one exists
+    conn = db.get_conn()
+    try:
+        conn.execute("UPDATE renter_profiles SET name = ? WHERE phone = ?", (clean_name, user["phone"]))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "name": clean_name}
+
 @app.post("/api/auth/logout")
 async def auth_logout(request: Request) -> dict[str, Any]:
     auth = request.headers.get("Authorization", "")
