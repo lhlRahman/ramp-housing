@@ -262,7 +262,7 @@ export default function DashboardPage() {
                       </div>
                     </div>
 
-                    {item.summary && (
+                    {item.summary && item.summary.length > 2 && (
                       <p className="text-xs text-text-secondary mt-2 bg-surface-2 rounded-lg px-3 py-2">{item.summary}</p>
                     )}
                   </div>
