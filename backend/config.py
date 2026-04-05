@@ -27,7 +27,7 @@ GEOCODER_CONCURRENCY = int(os.getenv("GEOCODER_CONCURRENCY", "6"))
 
 # Scraper defaults
 SCRAPER_TIMEOUT = int(os.getenv("SCRAPER_TIMEOUT", "40000"))  # ms for Playwright page loads
-SCRAPER_MAX_PAGES = int(os.getenv("SCRAPER_MAX_PAGES", "15"))
+SCRAPER_MAX_PAGES = int(os.getenv("SCRAPER_MAX_PAGES", "100"))
 BROWSER_HEADLESS = os.getenv("BROWSER_HEADLESS", "true").lower() == "true"
 ZUMPER_PAGE_CONCURRENCY = int(os.getenv("ZUMPER_PAGE_CONCURRENCY", "4"))
 USER_AGENT = os.getenv(

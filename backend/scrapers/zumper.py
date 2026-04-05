@@ -111,7 +111,7 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
             return []
 
         listings = _parse_items(first_page.get("listables", []), city_slug, min_price, max_price, bedrooms)
-        total = min(first_page.get("matching", 0), 500)  # cap to prevent excessive requests
+        total = first_page.get("matching", 0)  # no cap — fetch all available
         offsets = list(range(PAGE_SIZE, total, PAGE_SIZE))
 
         if not offsets:

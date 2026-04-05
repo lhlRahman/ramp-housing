@@ -68,7 +68,7 @@ def get_subdomain(city: str, state: str) -> str | None:
     return None
 
 
-CL_MAX_PAGES = 10  # 120 results per page → up to ~1200 listings
+CL_MAX_PAGES = 100  # 120 results per page — no practical limit
 CL_PAGE_SIZE = 120
 
 
