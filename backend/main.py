@@ -882,14 +882,29 @@ async def retell_webhook(request: Request) -> dict[str, Any]:
             }))
             log.info("Outreach %s updated from webhook: %s", outreach_id, outreach_status)
 
-            # Send post-call follow-up SMS to landlord
+            # Only send follow-ups if the call was meaningful (not a 5-second IVR fail)
+            duration_ms = source.get("duration_ms") or 0
+            call_successful = analysis.get("call_successful", False)
+            transcript_len = len(transcript.strip()) if transcript else 0
+
+            # Send post-call follow-up SMS to landlord (only if real conversation happened)
             landlord_phone = source.get("to_number") or metadata.get("landlord_phone")
-            if landlord_phone and transcript:
+            if landlord_phone and transcript_len > 200 and duration_ms > 30000:
                 asyncio.create_task(_send_post_call_followup(outreach_id, landlord_phone, transcript, metadata))
-            # Send call summary to the renter
+            # Send call summary to the renter (only for meaningful calls)
             renter_phone = metadata.get("renter_phone")
-            if renter_phone and transcript:
+            if renter_phone and transcript_len > 200 and duration_ms > 30000:
                 asyncio.create_task(_send_renter_call_summary(outreach_id, renter_phone, transcript, metadata))
+            elif renter_phone and duration_ms <= 30000 and transcript_len < 200:
+                # Short/failed call — send a brief heads-up instead
+                outreach = get_outreach(outreach_id)
+                listing = outreach.get("listing", {}) if outreach else {}
+                title = listing.get("title", "a listing")
+                try:
+                    await _send_twilio_sms(renter_phone, f"Call about {title} didn't go through (hit voicemail/IVR). We'll try again or you can retry from the dashboard.")
+                    add_outreach_event(outreach_id, "renter_call_summary", "Call failed — notified renter")
+                except Exception as exc:
+                    log.error("Failed call notification to renter failed: %s", exc)
         elif event_type in ("call_started", "chat_started"):
             update_outreach(outreach_id, status="contacted")
             add_outreach_event(outreach_id, "call_started")
