@@ -13,10 +13,17 @@ interface Props {
   loading?: boolean;
   onPolygonChange: (polygon: [number, number][] | null) => void;
   onSelectListing: (id: string) => void;
+  onOpenDetail: (id: string) => void;
   onDrawStart?: () => void;
 }
 
-export default function Map({ listings, selectedId, center, zoom, loading, onPolygonChange, onSelectListing, onDrawStart }: Props) {
+interface HoverPreview {
+  listing: Listing;
+  x: number;
+  y: number;
+}
+
+export default function Map({ listings, selectedId, center, zoom, loading, onPolygonChange, onSelectListing, onOpenDetail, onDrawStart }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const markersRef = useRef<globalThis.Map<string, Marker>>(new globalThis.Map());
@@ -26,9 +33,29 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
   const [showMenu, setShowMenu] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const [hoverPreview, setHoverPreview] = useState<HoverPreview | null>(null);
+  const setHoverPreviewRef = useRef(setHoverPreview);
+  const hoveredListingRef = useRef<Listing | null>(null);
 
   // Keep ref current so initMap never needs onPolygonChange as a dependency
   useEffect(() => { onPolygonChangeRef.current = onPolygonChange; }, [onPolygonChange]);
+
+  // Track mouse position for hover preview — attached to container, not markers
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onMove = (e: MouseEvent) => {
+      if (!hoveredListingRef.current) return;
+      const rect = el.getBoundingClientRect();
+      setHoverPreviewRef.current({
+        listing: hoveredListingRef.current,
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top,
+      });
+    };
+    el.addEventListener("mousemove", onMove);
+    return () => el.removeEventListener("mousemove", onMove);
+  }, []);
 
   useEffect(() => {
     if (!showMenu) return;
@@ -201,21 +228,21 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
           iconAnchor: [20, 30],
         });
 
-        const esc = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-        const price = `$${listing.price_min.toLocaleString()}/mo`;
-        const beds = listing.bedrooms === 0 ? "Studio" : `${listing.bedrooms} BR`;
-        const marker = L.marker([listing.lat, listing.lng], { icon })
-          .addTo(map)
-          .bindPopup(
-            `<div style="font-family:Inter,system-ui,sans-serif;min-width:180px">` +
-            `<div style="font-weight:600;font-size:13px;margin-bottom:2px">${esc(listing.title)}</div>` +
-            `<div style="color:#6b7280;font-size:12px;margin-bottom:4px">${esc(listing.address || "")}</div>` +
-            `<div style="font-weight:700;font-size:14px">${price}</div>` +
-            `<div style="color:#6b7280;font-size:12px">${beds} · ${listing.bathrooms} BA</div>` +
-            `</div>`
-          );
+        const marker = L.marker([listing.lat, listing.lng], { icon }).addTo(map);
 
-        marker.on("click", () => onSelectListing(listing.id));
+        marker.on("click", () => {
+          onSelectListing(listing.id);
+          onOpenDetail(listing.id);
+        });
+
+        marker.on("mouseover", () => {
+          hoveredListingRef.current = listing;
+        });
+        marker.on("mouseout", () => {
+          hoveredListingRef.current = null;
+          setHoverPreviewRef.current(null);
+        });
+
         markersRef.current.set(listing.id, marker);
       }
     })();
@@ -340,6 +367,46 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
           </div>
         )}
       </div>
+
+      {/* Hover preview card */}
+      {hoverPreview && (() => {
+        const { listing, x, y } = hoverPreview;
+        const photo = listing.photo_url || listing.photos?.[0];
+        const price = `$${listing.price_min.toLocaleString()}/mo`;
+        const beds = listing.bedrooms === 0 ? "Studio" : `${listing.bedrooms} BR`;
+        // Flip horizontally near right edge, vertically near bottom
+        const flipX = x > (containerRef.current?.clientWidth ?? 0) - 260;
+        const flipY = y > (containerRef.current?.clientHeight ?? 0) - 200;
+        return (
+          <div
+            className="absolute z-[1500] pointer-events-none"
+            style={{
+              left: flipX ? x - 240 : x + 16,
+              top: flipY ? y - 180 : y - 10,
+            }}
+          >
+            <div className="bg-surface-1 border border-border rounded-xl shadow-card-hover overflow-hidden w-[220px] animate-fade-in">
+              {photo ? (
+                <img src={photo} alt="" className="w-full h-[130px] object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              ) : (
+                <div className="w-full h-[130px] bg-surface-3 flex items-center justify-center">
+                  <svg className="w-8 h-8 text-surface-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.41a2.25 2.25 0 013.182 0l2.909 2.91M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
+                  </svg>
+                </div>
+              )}
+              <div className="px-3 py-2.5">
+                <p className="text-sm font-semibold text-text-primary leading-snug line-clamp-1">{listing.title}</p>
+                <p className="text-xs text-text-muted mt-0.5 line-clamp-1">{listing.address || listing.neighborhood}</p>
+                <div className="flex items-center justify-between mt-1.5">
+                  <span className="text-sm font-bold text-ramp-lime">{price}</span>
+                  <span className="text-xs text-text-secondary">{beds} · {listing.bathrooms} BA</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {isDrawing && !hasPolygon && (
         <div className="absolute top-16 left-14 z-[1000] pointer-events-none">

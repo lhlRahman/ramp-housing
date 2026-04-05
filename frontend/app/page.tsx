@@ -161,6 +161,7 @@ export default function Home() {
             listings={listings} selectedId={selectedId} center={mapCenter} zoom={mapZoom}
             loading={loading || parsing} onPolygonChange={handlePolygonChange}
             onSelectListing={(id) => setSelectedId(prev => prev === id ? null : id)}
+            onOpenDetail={(id) => { const l = listings.find(l => l.id === id); if (l) setDetailListing(l); setSelectedId(id); }}
             onDrawStart={() => setShowEmptyState(false)}
           />
 
