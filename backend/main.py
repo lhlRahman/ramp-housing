@@ -192,22 +192,6 @@ async def _sms_followup_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    # Seed test renter profile so we can test calls immediately
-    upsert_renter_profile(
-        phone="16477732191",
-        name="Habib (Test)",
-        current_city="New York, NY",
-        move_in_date="2026-06-01",
-        budget_max=3000,
-        income_range="$80k-100k",
-        credit_score_range="700-750",
-        pets="none",
-        smoker=False,
-        guarantor=True,
-        dealbreakers="No basement apartments",
-        free_text_context="I'm a software engineer looking for a quiet place to work from home. Flexible on move-in if the place is right.",
-    )
-    log.info("Seeded test renter profile for +16477732191")
     await geocoder.startup()
     asyncio.create_task(bg_scraper.refresh_session())
     followup_task = asyncio.create_task(_sms_followup_loop())
@@ -785,6 +769,46 @@ async def retell_check_escalation(escalation_id: str) -> dict[str, Any]:
     return check_escalation(escalation_id)
 
 
+async def _send_post_call_followup(outreach_id: str, landlord_phone: str, transcript: str, metadata: dict) -> None:
+    """After a call ends, text the landlord a short follow-up with details discussed."""
+    renter_name = metadata.get("renter_name") or "the renter"
+    outreach = get_outreach(outreach_id)
+    listing = outreach.get("listing", {}) if outreach else {}
+    listing_title = listing.get("title", "the listing")
+
+    prompt = (
+        f"A call just ended between an assistant (Alex) and a landlord about a rental listing.\n\n"
+        f"Listing: {listing_title}\n"
+        f"Renter: {renter_name}\n\n"
+        f"Call transcript:\n{transcript[:3000]}\n\n"
+        f"Write a SHORT follow-up text message (under 300 chars) to the landlord. "
+        f"Thank them for the call, confirm any key details discussed (tour time, availability, fees), "
+        f"and say {renter_name} will be in touch. "
+        f"If the call went badly or they said it's unavailable, just thank them for their time. "
+        f"Casual, natural tone. No emojis. Return ONLY the message text, nothing else."
+    )
+    try:
+        async with httpx.AsyncClient() as http:
+            resp = await http.post(
+                "https://api.x.ai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {config.XAI_API_KEY}", "Content-Type": "application/json"},
+                json={"model": "grok-3", "messages": [{"role": "user", "content": prompt}], "max_tokens": 200},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            followup_text = resp.json()["choices"][0]["message"]["content"].strip().strip('"')
+    except Exception as exc:
+        log.warning("Post-call followup generation failed: %s", exc)
+        followup_text = f"Thanks for chatting about {listing_title}. {renter_name} will follow up shortly."
+
+    try:
+        await _send_twilio_sms(landlord_phone, followup_text)
+        add_outreach_event(outreach_id, "followup_sms", followup_text)
+        log.info("Post-call followup SMS sent for outreach %s", outreach_id)
+    except Exception as exc:
+        log.error("Post-call followup SMS failed for %s: %s", outreach_id, exc)
+
+
 @app.post("/api/retell/webhook")
 async def retell_webhook(request: Request) -> dict[str, Any]:
     payload = await request.json()
@@ -816,6 +840,11 @@ async def retell_webhook(request: Request) -> dict[str, Any]:
                 "successful": analysis.get("call_successful"),
             }))
             log.info("Outreach %s updated from webhook: %s", outreach_id, outreach_status)
+
+            # Send post-call follow-up SMS to landlord
+            landlord_phone = source.get("to_number") or metadata.get("landlord_phone")
+            if landlord_phone and transcript:
+                asyncio.create_task(_send_post_call_followup(outreach_id, landlord_phone, transcript, metadata))
         elif event_type in ("call_started", "chat_started"):
             update_outreach(outreach_id, status="contacted")
             add_outreach_event(outreach_id, "call_started")
@@ -1041,17 +1070,34 @@ async def _build_sms_parts(dyn_vars: dict[str, str]) -> list[str]:
     custom = dyn_vars.get("custom_message", "").strip()
     pets = dyn_vars.get("renter_pets", "none")
     dealbreakers = dyn_vars.get("renter_dealbreakers", "")
-    move_in = dyn_vars.get("renter_move_in", "flexible")
+    move_in = dyn_vars.get("move_in_date") or dyn_vars.get("renter_move_in", "flexible")
+
+    # Build context about what we already know vs what to ask
+    listing_title = dyn_vars.get("listing_title", "your listing")
+    listing_addr = dyn_vars.get("listing_address", "")
+    listing_price = dyn_vars.get("listing_price", "")
+    renter_name = dyn_vars.get("renter_name", "a renter")
+
+    known_parts = []
+    if listing_price:
+        known_parts.append(f"${listing_price}/mo")
+    if dyn_vars.get("listing_bedrooms"):
+        known_parts.append(f"{dyn_vars['listing_bedrooms']}BR")
+
+    questions_to_ask = ["are utilities included or separate", "any additional fees (broker, deposit, application)"]
+    if not dyn_vars.get("listing_furnished"):
+        questions_to_ask.append("furnished or unfurnished")
 
     prompt = (
-        f"You're texting a landlord on behalf of a renter. Write 2-3 SHORT separate text messages (like how real people text — not one big paragraph).\n\n"
-        f"Listing: {dyn_vars.get('listing_title', '')} at {dyn_vars.get('listing_address', '')}, ${dyn_vars.get('listing_price', '?')}/mo\n"
-        f"Renter: {dyn_vars.get('renter_name', 'a renter')}\n"
-        f"Move-in: {move_in}\n"
-        f"Budget: ${dyn_vars.get('renter_budget', 'flexible')}/mo\n"
+        f"You're texting a landlord on behalf of {renter_name}. Write 2-3 SHORT separate text messages.\n\n"
+        f"Listing: {listing_title}" + (f" at {listing_addr}" if listing_addr else "") + "\n"
+        f"Already known about listing: {', '.join(known_parts) if known_parts else 'just the title'}\n"
+        f"Move-in: {move_in}\n\n"
+        f"IMPORTANT: Do NOT ask about things we already know ({', '.join(known_parts) if known_parts else 'nothing known'}).\n"
+        f"Instead ask about: {', '.join(questions_to_ask)}\n"
     )
     if pets and pets.lower() != "none":
-        prompt += f"Pets: {pets}\n"
+        prompt += f"Mention they have {pets}\n"
     if dealbreakers:
         prompt += f"Dealbreakers: {dealbreakers}\n"
     if custom:
@@ -1060,12 +1106,12 @@ async def _build_sms_parts(dyn_vars: dict[str, str]) -> list[str]:
     prompt += (
         f"\nRules:\n"
         f"- First message: brief intro + ask if available\n"
-        f"- Second message: mention move-in timing and any key questions (pets, specific concerns)\n"
-        f"- Optional third message ONLY if renter has custom questions\n"
+        f"- Second message: ask about fees, utilities, and unknowns\n"
+        f"- Optional third message ONLY if renter has custom questions or pets\n"
         f"- Each message under 160 chars (single SMS segment)\n"
         f"- Casual, natural tone — like a real person texting\n"
         f"- No emojis, no 'I hope this message finds you well' type stuff\n"
-        f"- NEVER suggest or pick specific days/times for tours — if asking about viewing, say something like 'would love to set up a tour' without committing to a date\n"
+        f"- NEVER suggest or pick specific days/times for tours\n"
         f"- Return ONLY a JSON array of strings, e.g. [\"msg1\", \"msg2\"]\n"
     )
     try:
@@ -1144,23 +1190,65 @@ async def api_start_outreach(body: StartOutreachRequest) -> dict[str, Any]:
 
         # If landlord phone is available, dispatch the agent
         if item.landlord_phone:
-            # Build dynamic variables for the agent prompt
+            # Build a concise, listing-specific call script
+            renter_name = profile.get("name") or "a renter"
+            listing_title = item.listing.get("title", "your listing")
+            listing_addr = item.listing.get("address", "")
+            listing_price = item.listing.get("price_min") or item.listing.get("price", "")
+            listing_beds = item.listing.get("bedrooms", "")
+            move_in = profile.get("move_in_date") or "as soon as possible"
+
+            addr_part = f" at {listing_addr}" if listing_addr else ""
+
+            # Build follow-up questions for things NOT already known
+            known_facts = []
+            unknown_questions = []
+            if listing_price:
+                known_facts.append(f"${listing_price}/month")
+            if listing_beds:
+                known_facts.append(f"{listing_beds} bedroom")
+            if item.listing.get("furnished"):
+                known_facts.append("furnished")
+            if item.listing.get("no_fee"):
+                known_facts.append("no broker fee")
+
+            # Always ask about these since listings rarely include them
+            unknown_questions.append("Are utilities included or separate?")
+            unknown_questions.append("Are there any additional fees like broker fees, move-in deposits, or application fees?")
+            if not item.listing.get("available_from"):
+                unknown_questions.append(f"Is it available for move-in around {move_in}?")
+            if not item.listing.get("furnished"):
+                unknown_questions.append("Does it come furnished or unfurnished?")
+
+            known_str = ", ".join(known_facts) if known_facts else "the listing"
+            questions_str = " ".join(unknown_questions)
+
+            call_script = (
+                f"Hi, my name is Alex and I'm calling on behalf of {renter_name} "
+                f"about the {listing_title}{addr_part}. "
+                f"I see it's listed as {known_str}. Is this unit still available? "
+                f"If so, I have a few quick questions: {questions_str} "
+                f"And could we schedule a viewing for {renter_name}?"
+            )
+
+            custom_note = body.custom_message or ""
+            if custom_note:
+                call_script += f" {custom_note}"
+
             dyn_vars = {
-                "renter_name": profile.get("name") or "the renter",
-                "renter_budget": str(profile.get("budget_max") or "flexible"),
-                "renter_move_in": profile.get("move_in_date") or "flexible",
+                "call_script": call_script,
+                "renter_name": renter_name,
+                "listing_title": listing_title,
+                "listing_address": listing_addr,
+                "listing_price": str(listing_price),
+                "listing_bedrooms": str(listing_beds),
+                "listing_furnished": "yes" if item.listing.get("furnished") else "",
+                "move_in_date": move_in,
+                "custom_message": body.custom_message or "",
                 "renter_pets": profile.get("pets") or "none",
                 "renter_dealbreakers": profile.get("dealbreakers") or "",
-                "listing_title": item.listing.get("title", ""),
-                "listing_address": item.listing.get("address", ""),
-                "listing_price": str(item.listing.get("price_min") or item.listing.get("price", "")),
-                "listing_description": (item.listing.get("description") or "")[:1000],
-                "listing_bedrooms": str(item.listing.get("bedrooms", "")),
-                "listing_bathrooms": str(item.listing.get("bathrooms", "")),
-                "listing_source": item.listing.get("source", ""),
-                "custom_message": body.custom_message or "",
-                "renter_phone": cleaned_phone,
                 "outreach_id": oid,
+                "renter_phone": cleaned_phone,
             }
             try:
                 if body.channel == "call":
@@ -1284,7 +1372,7 @@ async def twilio_sms_webhook(request: Request):
     conn = db.get_conn()
     try:
         row = conn.execute(
-            "SELECT outreach_id, renter_phone, status FROM outreach WHERE landlord_phone = ? AND channel='text' ORDER BY created_at DESC LIMIT 1",
+            "SELECT outreach_id, renter_phone, status, channel FROM outreach WHERE landlord_phone = ? ORDER BY created_at DESC LIMIT 1",
             (from_clean,),
         ).fetchone()
     finally:
@@ -1322,10 +1410,23 @@ async def twilio_sms_webhook(request: Request):
             current_status = outreach.get("status", current_status)
 
             events = list_outreach_events(oid)
-            conversation = "\n".join(
-                f"{'Us' if e['event_type'] in ('contacted', 'sms_sent', 'followup_sent') else 'Landlord'}: {_extract_sms_body(e['detail'])}"
-                for e in events if e["event_type"] in ("contacted", "sms_reply", "sms_sent", "followup_sent")
-            )
+
+            # If this outreach started as a call, include the call transcript for context
+            conversation_parts = []
+            for e in events:
+                if e["event_type"] == "call_ended":
+                    try:
+                        call_data = json.loads(e["detail"])
+                        transcript = call_data.get("transcript", "")
+                        if transcript:
+                            conversation_parts.append(f"[Call transcript]: {transcript[:2000]}")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                elif e["event_type"] in ("contacted", "sms_sent", "followup_sent", "followup_sms"):
+                    conversation_parts.append(f"Us: {_extract_sms_body(e['detail'])}")
+                elif e["event_type"] == "sms_reply":
+                    conversation_parts.append(f"Landlord: {_extract_sms_body(e['detail'])}")
+            conversation = "\n".join(conversation_parts)
             profile = get_renter_profile(row["renter_phone"])
             listing = json.loads(outreach.get("listing_json", "{}")) if outreach else {}
 
