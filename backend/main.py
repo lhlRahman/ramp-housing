@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Request, Header
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
@@ -63,13 +63,25 @@ logging.basicConfig(
 log = logging.getLogger("ramp")
 
 
+# ── API Key auth for admin/outreach endpoints ─────────────────────────
+async def require_api_key(authorization: str = Header(default="")) -> None:
+    """Verify API key for protected endpoints. Skip if no key configured (dev mode)."""
+    if not config.API_SECRET_KEY:
+        return  # no key set = dev mode, allow all
+    token = authorization.removeprefix("Bearer ").strip()
+    if not hmac.compare_digest(token, config.API_SECRET_KEY):
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
 FOLLOWUP_INTERVAL = 60 * 60  # check every hour
 FOLLOWUP_AFTER_SECS = 24 * 60 * 60  # nudge after 24h silence
 GHOST_AFTER_SECS = 72 * 60 * 60  # mark ghosted after 72h silence
 MAX_FOLLOWUPS = 2  # max nudge messages per outreach
 
 # Per-outreach locks to prevent race conditions when multiple SMS arrive simultaneously
+# Capped to prevent unbounded memory growth
 _outreach_locks: dict[str, asyncio.Lock] = {}
+_MAX_OUTREACH_LOCKS = 1000
 
 # ── Background scrape registry ─────────────────────────────────────────
 # Maps cache_key -> Task[list[Listing]] so scrapes survive client disconnects
@@ -329,7 +341,7 @@ async def ws_search(websocket: WebSocket):
 
     try:
         poly = params.get("polygon", [])
-        if not isinstance(poly, list) or len(poly) < 3:
+        if not isinstance(poly, list) or len(poly) < 3 or len(poly) > 500:
             await websocket.send_json({"type": "error", "message": "Invalid polygon"})
             return
 
@@ -521,7 +533,7 @@ async def search(
 ) -> dict[str, Any]:
     try:
         poly = json.loads(polygon)
-        if not isinstance(poly, list) or len(poly) < 3:
+        if not isinstance(poly, list) or len(poly) < 3 or len(poly) > 500:
             raise ValueError
     except (json.JSONDecodeError, ValueError):
         raise HTTPException(status_code=400, detail="Invalid polygon — need JSON array of ≥3 [lat,lng] pairs")
@@ -651,10 +663,32 @@ async def search(
     }
 
 
+_ALLOWED_LISTING_DOMAINS = {
+    "craigslist.org", "zumper.com", "renthop.com", "junehomes.com",
+    "alohause.com", "theblueground.com", "blueground.com", "furnishedfinder.com",
+    "leasebreak.com", "zillow.com", "hotpads.com", "apartments.com",
+    "streeteasy.com", "realtor.com", "trulia.com", "redfin.com",
+}
+
+
+def _is_allowed_listing_url(url: str) -> bool:
+    """Check if URL domain is in the allowlist to prevent SSRF."""
+    from urllib.parse import urlparse
+    try:
+        host = urlparse(url).hostname or ""
+        # Strip www. and check against allowlist
+        host = host.removeprefix("www.")
+        return any(host == d or host.endswith(f".{d}") for d in _ALLOWED_LISTING_DOMAINS)
+    except Exception:
+        return False
+
+
 @app.get("/api/listing/detail")
 async def listing_detail(url: str = Query(..., description="Original listing URL")) -> dict[str, Any]:
     if not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Invalid URL — must start with http:// or https://")
+    if not _is_allowed_listing_url(url):
+        raise HTTPException(status_code=400, detail="URL domain not allowed")
     from scrapers import detail_scraper
     try:
         return await detail_scraper.scrape_detail(url)
@@ -725,7 +759,7 @@ async def health():
     return {"status": "ok"}
 
 
-@app.post("/api/cache/clear")
+@app.post("/api/cache/clear", dependencies=[Depends(require_api_key)])
 async def clear_scrape_cache(source: str = Query(""), city: str = Query("")):
     """Clear scrape cache. Optional filters: source, city. No params = clear all."""
     conn = db.get_conn()
@@ -856,12 +890,12 @@ async def retell_webhook(request: Request) -> dict[str, Any]:
     }
 
 
-@app.get("/api/retell/admin/conversations")
+@app.get("/api/retell/admin/conversations", dependencies=[Depends(require_api_key)])
 async def retell_list_conversations(limit: int = Query(50, ge=1, le=200)) -> dict[str, Any]:
     return {"conversations": list_retell_conversations(limit=limit)}
 
 
-@app.get("/api/retell/admin/conversations/{conversation_id}")
+@app.get("/api/retell/admin/conversations/{conversation_id}", dependencies=[Depends(require_api_key)])
 async def retell_get_conversation(conversation_id: str) -> dict[str, Any]:
     record = get_retell_conversation(conversation_id)
     if not record:
@@ -869,7 +903,7 @@ async def retell_get_conversation(conversation_id: str) -> dict[str, Any]:
     return record
 
 
-@app.get("/api/retell/admin/escalations")
+@app.get("/api/retell/admin/escalations", dependencies=[Depends(require_api_key)])
 async def retell_list_escalations(
     status: str | None = Query(None, pattern="^(pending|answered)$"),
     limit: int = Query(100, ge=1, le=500),
@@ -877,7 +911,7 @@ async def retell_list_escalations(
     return {"escalations": list_retell_escalations(status=status, limit=limit)}
 
 
-@app.get("/api/retell/admin/escalations/{escalation_id}")
+@app.get("/api/retell/admin/escalations/{escalation_id}", dependencies=[Depends(require_api_key)])
 async def retell_get_escalation(escalation_id: str) -> dict[str, Any]:
     record = get_retell_escalation(escalation_id)
     if not record:
@@ -885,7 +919,7 @@ async def retell_get_escalation(escalation_id: str) -> dict[str, Any]:
     return record
 
 
-@app.post("/api/retell/admin/escalations/{escalation_id}/reply")
+@app.post("/api/retell/admin/escalations/{escalation_id}/reply", dependencies=[Depends(require_api_key)])
 async def retell_reply_escalation(escalation_id: str, body: RetellEscalationReplyRequest) -> dict[str, Any]:
     if not answer_retell_escalation(escalation_id, body.answer.strip()):
         raise HTTPException(status_code=404, detail="Escalation not found")
@@ -896,13 +930,13 @@ async def retell_reply_escalation(escalation_id: str, body: RetellEscalationRepl
     }
 
 
-@app.post("/api/retell/actions/outbound-sms")
+@app.post("/api/retell/actions/outbound-sms", dependencies=[Depends(require_api_key)])
 async def retell_outbound_sms(body: RetellOutboundSMSRequest) -> dict[str, Any]:
     client = RetellClient()
     return await client.create_sms_chat(body)
 
 
-@app.post("/api/retell/actions/outbound-call")
+@app.post("/api/retell/actions/outbound-call", dependencies=[Depends(require_api_key)])
 async def retell_outbound_call(body: RetellOutboundCallRequest) -> dict[str, Any]:
     client = RetellClient()
     return await client.create_phone_call(body)
@@ -1287,7 +1321,7 @@ async def api_start_outreach(body: StartOutreachRequest) -> dict[str, Any]:
     for r in results:
         if isinstance(r, Exception):
             log.error("Outreach error: %s", r)
-            outreach_results.append({"error": str(r)})
+            outreach_results.append({"error": "Outreach dispatch failed"})
         else:
             outreach_results.append(r)
 
@@ -1335,7 +1369,12 @@ def _validate_twilio_signature(request: Request, form_data: dict[str, str]) -> b
     signature = request.headers.get("X-Twilio-Signature", "")
     if not signature:
         return False
-    url = str(request.url)
+    # Reconstruct the public URL Twilio signed against (behind proxy, request.url is internal)
+    proto = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+    host = request.headers.get("Host") or request.headers.get("X-Forwarded-Host") or request.url.netloc
+    url = f"{proto}://{host}{request.url.path}"
+    if request.url.query:
+        url += f"?{request.url.query}"
     # Twilio signs over URL + sorted POST params
     data_str = url + "".join(f"{k}{form_data[k]}" for k in sorted(form_data.keys()))
     expected = base64.b64encode(
@@ -1393,6 +1432,11 @@ async def twilio_sms_webhook(request: Request):
 
     # Per-outreach lock prevents race conditions when multiple SMS arrive fast
     if oid not in _outreach_locks:
+        # Evict oldest locks if we hit the cap
+        if len(_outreach_locks) >= _MAX_OUTREACH_LOCKS:
+            to_remove = [k for k, v in list(_outreach_locks.items())[:100] if not v.locked()]
+            for k in to_remove:
+                _outreach_locks.pop(k, None)
         _outreach_locks[oid] = asyncio.Lock()
     async with _outreach_locks[oid]:
         add_outreach_event(oid, "sms_reply", json.dumps({
@@ -1428,7 +1472,7 @@ async def twilio_sms_webhook(request: Request):
                     conversation_parts.append(f"Landlord: {_extract_sms_body(e['detail'])}")
             conversation = "\n".join(conversation_parts)
             profile = get_renter_profile(row["renter_phone"])
-            listing = json.loads(outreach.get("listing_json", "{}")) if outreach else {}
+            listing = outreach.get("listing") or {} if outreach else {}
 
             # Analyze the reply for intent
             analysis = await _analyze_sms_conversation(conversation, body_text, listing)
@@ -1575,7 +1619,7 @@ class OutreachUpdateRequest(BaseModel):
     summary: str | None = Field(default=None, max_length=2000)
 
 
-@app.post("/api/outreach/{outreach_id}/update")
+@app.post("/api/outreach/{outreach_id}/update", dependencies=[Depends(require_api_key)])
 async def api_update_outreach(outreach_id: str, body: OutreachUpdateRequest) -> dict[str, Any]:
     if body.status and body.status not in VALID_OUTREACH_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {', '.join(sorted(VALID_OUTREACH_STATUSES))}")
