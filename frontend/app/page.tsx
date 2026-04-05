@@ -88,7 +88,8 @@ export default function Home() {
     handleSearchInit, clearLocation,
   } = useSearchFilters();
   const { prompt, setPrompt, parsedSummary, parsing, parsePromptToFilters } = usePromptFilters();
-  const { listings, loading, error, stats, sourceStatuses, runSearch, resetResults } = useHousingSearch();
+  const { listings, unmappedListings, loading, error, stats, sourceStatuses, runSearch, resetResults } = useHousingSearch();
+  const [showUnmapped, setShowUnmapped] = useState(false);
 
   // Persist profile to localStorage
   useEffect(() => {
@@ -311,6 +312,35 @@ export default function Home() {
                     onOpenDetail={() => { setDetailListing(listing); setSelectedId(listing.id); }}
                   />
                 ))}
+
+                {unmappedListings.length > 0 && (
+                  <div className="mt-4">
+                    <button
+                      onClick={() => setShowUnmapped(!showUnmapped)}
+                      className="w-full flex items-center justify-between px-3 py-2 bg-surface-2 border border-border rounded-lg text-xs hover:bg-surface-3 transition-colors"
+                    >
+                      <span className="text-text-secondary">
+                        <span className="font-semibold text-text-primary">{unmappedListings.length}</span> more without map location
+                      </span>
+                      <svg className={`w-3.5 h-3.5 text-text-muted transition-transform ${showUnmapped ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    {showUnmapped && (
+                      <div className="mt-2 space-y-2">
+                        {sortListings(unmappedListings, sort).map((listing) => (
+                          <ListingCard
+                            key={listing.id}
+                            listing={listing}
+                            selected={listing.id === selectedId}
+                            onClick={() => setSelectedId(prev => prev === listing.id ? null : listing.id)}
+                            onOpenDetail={() => { setDetailListing(listing); setSelectedId(listing.id); }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

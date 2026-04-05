@@ -275,11 +275,12 @@ async def _send_listings_in_chunks(
     source: str,
     listings: list[Listing],
     chunk_size: int = 200,
+    msg_type: str = "listings",
 ) -> None:
     for start in range(0, len(listings), chunk_size):
         chunk = listings[start:start + chunk_size]
         await websocket.send_json({
-            "type": "listings",
+            "type": msg_type,
             "source": source,
             "listings": [listing.model_dump() for listing in chunk],
         })
@@ -407,22 +408,29 @@ async def ws_search(websocket: WebSocket):
             if persist_processed_cache and _count_listings_with_coords(batch) > original_with_coords:
                 cache_scrape(src_name, city_key, params_hash, [listing.model_dump() for listing in batch])
             with_coords = [l for l in batch if l.lat is not None and l.lng is not None]
-            without = len(batch) - len(with_coords)
-            if without > 0:
-                log.warning("%s: %d/%d listings missing coords after geocoding", src_name, without, len(batch))
+            no_coords = [l for l in batch if l.lat is None or l.lng is None]
+            if no_coords:
+                log.warning("%s: %d/%d listings missing coords after geocoding", src_name, len(no_coords), len(batch))
             in_poly = [l for l in with_coords if l.lat is not None and l.lng is not None and point_in_polygon(l.lat, l.lng, poly)]
             final = deduplicate(in_poly)
             # Cross-batch dedup
             final = [l for l in final if l.id not in seen_ids]
             for l in final:
                 seen_ids.add(l.id)
+            # Also dedup no-coord listings and send them separately
+            unmapped = deduplicate(no_coords)
+            unmapped = [l for l in unmapped if l.id not in seen_ids]
+            for l in unmapped:
+                seen_ids.add(l.id)
             total_stats["total_scraped"] += len(batch)
             total_stats["geocoded"] += len(with_coords)
             total_stats["in_polygon"] += len(in_poly)
-            total_stats["returned"] += len(final)
-            total_stats["skipped_no_coords"] += len(batch) - len(with_coords)
+            total_stats["returned"] += len(final) + len(unmapped)
+            total_stats["skipped_no_coords"] += len(no_coords)
             if final:
                 await _send_listings_in_chunks(websocket, src_name, final)
+            if unmapped:
+                await _send_listings_in_chunks(websocket, src_name, unmapped, msg_type="unmapped_listings")
             return len(batch)
 
         # Serve cached sources immediately

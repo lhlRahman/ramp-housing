@@ -10,6 +10,7 @@ interface RunSearchOptions {
 
 export function useHousingSearch() {
   const [listings, setListings] = useState<Listing[]>([]);
+  const [unmappedListings, setUnmappedListings] = useState<Listing[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<SearchResult["stats"] | null>(null);
@@ -18,6 +19,7 @@ export function useHousingSearch() {
 
   const resetResults = useCallback(() => {
     setListings([]);
+    setUnmappedListings([]);
     setStats(null);
     setError(null);
     setSourceStatuses({});
@@ -40,6 +42,7 @@ export function useHousingSearch() {
     setLoading(true);
     setError(null);
     setListings([]);
+    setUnmappedListings([]);
     setStats(null);
     setSourceStatuses({});
 
@@ -49,6 +52,9 @@ export function useHousingSearch() {
       },
       onListings: (newListings) => {
         setListings((prev) => [...prev, ...newListings]);
+      },
+      onUnmappedListings: (newListings) => {
+        setUnmappedListings((prev) => [...prev, ...newListings]);
       },
       onSourceStatus: (source, status) => {
         setSourceStatuses((prev) => ({ ...prev, [source]: status }));
@@ -68,6 +74,7 @@ export function useHousingSearch() {
 
   return {
     listings,
+    unmappedListings,
     loading,
     error,
     stats,

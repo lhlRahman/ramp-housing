@@ -6,6 +6,7 @@ const WS_BASE = API_BASE.replace(/^http/, "ws");
 export interface SearchCallbacks {
   onInit: (detectedLocation: string, availableSources: string[]) => void;
   onListings: (listings: Listing[], source: string) => void;
+  onUnmappedListings?: (listings: Listing[], source: string) => void;
   onSourceStatus: (source: string, status: SourceStatus) => void;
   onDone: (stats: SearchResult["stats"]) => void;
   onError: (message: string) => void;
@@ -40,6 +41,8 @@ export function searchListingsWS(
       callbacks.onInit(msg.detected_location, msg.available_sources);
     } else if (msg.type === "listings") {
       callbacks.onListings(msg.listings, msg.source);
+    } else if (msg.type === "unmapped_listings") {
+      callbacks.onUnmappedListings?.(msg.listings, msg.source);
     } else if (msg.type === "source_status") {
       callbacks.onSourceStatus(msg.source, { status: msg.status, count: msg.count, cached: msg.cached });
     } else if (msg.type === "done") {
