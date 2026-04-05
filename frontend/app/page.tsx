@@ -67,13 +67,21 @@ export default function Home() {
   return <AuthenticatedApp authUser={authUser} onLogout={() => { logout(); setAuthUser(null); }} />;
 }
 
+function loadSession<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try { const v = sessionStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+}
+function saveSession(key: string, value: unknown) {
+  try { sessionStorage.setItem(key, JSON.stringify(value)); } catch {}
+}
+
 function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout: () => void }) {
   const router = useRouter();
-  const [polygon, setPolygon] = useState<[number, number][] | null>(null);
+  const [polygon, setPolygonState] = useState<[number, number][] | null>(() => loadSession("search_polygon", null));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailListing, setDetailListing] = useState<Listing | null>(null);
   const [sort, setSort] = useState<SortOption>("price_asc");
-  const [showEmptyState, setShowEmptyState] = useState(true);
+  const [showEmptyState, setShowEmptyState] = useState(() => !loadSession("search_polygon", null));
 
   const [renterProfile, setRenterProfile] = useState<RenterProfile | null>(null);
   const [profileHydrated, setProfileHydrated] = useState(false);
@@ -141,6 +149,12 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
     window.addEventListener("keydown", handleEsc);
     return () => window.removeEventListener("keydown", handleEsc);
   }, [showProfileModal, detailListing]);
+
+  const setPolygon = useCallback((poly: [number, number][] | null) => {
+    setPolygonState(poly);
+    if (poly) saveSession("search_polygon", poly);
+    else try { sessionStorage.removeItem("search_polygon"); } catch {}
+  }, []);
 
   const doSearch = useCallback((poly: [number, number][], resolvedFilters = filters) => {
     runSearch(poly, resolvedFilters, {

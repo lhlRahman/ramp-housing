@@ -19,10 +19,15 @@ const DEFAULT_FILTERS: SearchFilters = {
   sources: [],
 };
 
+function loadSession<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try { const v = sessionStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+}
+
 export function useSearchFilters() {
-  const [filters, setFiltersState] = useState<SearchFilters>(DEFAULT_FILTERS);
-  const [detectedLocation, setDetectedLocation] = useState<string | null>(null);
-  const [availableSources, setAvailableSources] = useState<string[]>([]);
+  const [filters, setFiltersState] = useState<SearchFilters>(() => loadSession("search_filters", DEFAULT_FILTERS));
+  const [detectedLocation, setDetectedLocationState] = useState<string | null>(() => loadSession("search_location", null));
+  const [availableSources, setAvailableSourcesState] = useState<string[]>(() => loadSession("search_sources", []));
   const [noSourcesMessage, setNoSourcesMessage] = useState<string | null>(null);
   const [sourceMode, setSourceMode] = useState<SourceSelectionMode>("auto");
   const sourceModeRef = useRef<SourceSelectionMode>("auto");
@@ -34,6 +39,7 @@ export function useSearchFilters() {
 
   const setFilters = useCallback((next: SearchFilters) => {
     setFiltersState(next);
+    try { sessionStorage.setItem("search_filters", JSON.stringify(next)); } catch {}
   }, []);
 
   const applyParsedFilters = useCallback((parsed: Partial<SearchFilters>) => {
@@ -49,6 +55,15 @@ export function useSearchFilters() {
     updateSourceMode("manual");
     setFiltersState((prev) => ({ ...prev, sources }));
   }, [updateSourceMode]);
+
+  const setDetectedLocation = useCallback((loc: string | null) => {
+    setDetectedLocationState(loc);
+    try { if (loc) sessionStorage.setItem("search_location", JSON.stringify(loc)); else sessionStorage.removeItem("search_location"); } catch {}
+  }, []);
+  const setAvailableSources = useCallback((sources: string[]) => {
+    setAvailableSourcesState(sources);
+    try { sessionStorage.setItem("search_sources", JSON.stringify(sources)); } catch {}
+  }, []);
 
   const handleSearchInit = useCallback((locationName: string, sources: string[]) => {
     setDetectedLocation(locationName);
@@ -71,7 +86,8 @@ export function useSearchFilters() {
     setAvailableSources([]);
     setNoSourcesMessage(null);
     updateSourceMode("auto");
-  }, [updateSourceMode]);
+    try { sessionStorage.removeItem("search_filters"); } catch {}
+  }, [setDetectedLocation, setAvailableSources, updateSourceMode]);
 
   return {
     filters,

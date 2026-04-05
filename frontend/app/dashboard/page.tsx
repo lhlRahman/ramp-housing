@@ -278,17 +278,21 @@ export default function DashboardPage() {
                       >
                         <div className="px-5 pb-4 space-y-3 border-t border-border pt-3">
                           {callResult && (
-                            <div className="flex items-center gap-3 text-xs">
-                              {callResult.duration_ms && (
-                                <span className="text-text-muted">Duration: {Math.round(callResult.duration_ms / 1000)}s</span>
-                              )}
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-3 text-xs">
+                                {callResult.duration_ms && (
+                                  <span className="text-text-muted">Duration: {Math.round(callResult.duration_ms / 1000)}s</span>
+                                )}
+                              </div>
                               {callResult.recording_url && (
-                                <a href={callResult.recording_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="text-ramp-lime hover:text-ramp-lime-hover flex items-center gap-1">
-                                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
-                                  </svg>
-                                  Listen to recording
-                                </a>
+                                <div onClick={e => e.stopPropagation()}>
+                                  <audio
+                                    controls
+                                    preload="none"
+                                    src={callResult.recording_url}
+                                    className="w-full h-8 [&::-webkit-media-controls-panel]:bg-surface-2"
+                                  />
+                                </div>
                               )}
                             </div>
                           )}

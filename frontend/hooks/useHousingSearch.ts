@@ -4,18 +4,48 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { searchListingsWS } from "@/lib/api";
 import { Listing, SearchFilters, SearchResult, SourceStatus } from "@/lib/types";
 
+const CACHE_KEY = "search_cache";
+
+interface SearchCache {
+  listings: Listing[];
+  unmappedListings: Listing[];
+  stats: SearchResult["stats"] | null;
+}
+
+function loadCache(): SearchCache | null {
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+
+function saveCache(data: SearchCache) {
+  try {
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify(data));
+  } catch { /* quota exceeded, ignore */ }
+}
+
 interface RunSearchOptions {
   onInit?: (detectedLocation: string, availableSources: string[]) => void;
 }
 
 export function useHousingSearch() {
-  const [listings, setListings] = useState<Listing[]>([]);
-  const [unmappedListings, setUnmappedListings] = useState<Listing[]>([]);
+  const cached = useRef(loadCache());
+  const [listings, setListings] = useState<Listing[]>(cached.current?.listings || []);
+  const [unmappedListings, setUnmappedListings] = useState<Listing[]>(cached.current?.unmappedListings || []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [stats, setStats] = useState<SearchResult["stats"] | null>(null);
+  const [stats, setStats] = useState<SearchResult["stats"] | null>(cached.current?.stats || null);
   const [sourceStatuses, setSourceStatuses] = useState<Record<string, SourceStatus>>({});
   const wsCloseRef = useRef<(() => void) | null>(null);
+
+  // Persist search results when they change
+  useEffect(() => {
+    if (listings.length > 0 || unmappedListings.length > 0 || stats) {
+      saveCache({ listings, unmappedListings, stats });
+    }
+  }, [listings, unmappedListings, stats]);
 
   const resetResults = useCallback(() => {
     setListings([]);
@@ -24,6 +54,7 @@ export function useHousingSearch() {
     setError(null);
     setSourceStatuses({});
     setLoading(false);
+    try { sessionStorage.removeItem(CACHE_KEY); } catch {}
   }, []);
 
   const closeSearch = useCallback(() => {
