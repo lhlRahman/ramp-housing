@@ -68,6 +68,104 @@ def get_subdomain(city: str, state: str) -> str | None:
     return None
 
 
+CL_MAX_PAGES = 10  # 120 results per page → up to ~1200 listings
+CL_PAGE_SIZE = 120
+
+
+def _parse_page(text: str, city: str, state: str, base_url: str, min_price: int, max_price: int, bedrooms: list[int], seen_urls: set[str]) -> list[Listing]:
+    """Parse a single Craigslist search results page and return new listings."""
+    results: list[Listing] = []
+
+    ld_matches = re.findall(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', text, re.DOTALL)
+    ld_items: list[dict] = []
+    for m in ld_matches:
+        try:
+            data = json.loads(m)
+            if isinstance(data, dict) and data.get("itemListElement"):
+                ld_items = data["itemListElement"]
+                break
+        except Exception:
+            continue
+
+    price_map: dict[str, int] = {}
+    cards = re.findall(
+        r'<li class="cl-static-search-result"[^>]*>.*?<a href="([^"]+)".*?<div class="price">\$?([\d,]+)</div>',
+        text, re.DOTALL,
+    )
+    for href, price_str in cards:
+        price_map[href] = int(price_str.replace(",", ""))
+
+    location_map: dict[str, str] = {}
+    loc_cards = re.findall(
+        r'<a href="([^"]+)".*?<div class="location">\s*([^<]+)',
+        text, re.DOTALL,
+    )
+    for href, loc in loc_cards:
+        location_map[href] = loc.strip()
+
+    listing_urls = re.findall(r'href="(https://[^"]*craigslist[^"]*\.html)"', text)
+    url_set = list(dict.fromkeys(listing_urls))
+
+    for i, ld_entry in enumerate(ld_items):
+        item = ld_entry.get("item", {})
+        listing_url = url_set[i] if i < len(url_set) else ""
+
+        if listing_url in seen_urls:
+            continue
+
+        lat = item.get("latitude")
+        lng = item.get("longitude")
+        name = item.get("name", "")
+        beds = item.get("numberOfBedrooms")
+        baths = item.get("numberOfBathroomsTotal", 1)
+        addr_obj = item.get("address", {})
+        locality = addr_obj.get("addressLocality", "")
+        region = addr_obj.get("addressRegion", "")
+
+        price = price_map.get(listing_url, 0)
+        if not price:
+            price_match = re.search(r"\$(\d[\d,]*)", name)
+            if price_match:
+                price = int(price_match.group(1).replace(",", ""))
+
+        if not price:
+            continue
+        if price < min_price or price > max_price:
+            continue
+
+        beds = int(beds) if beds else 1
+        if beds not in bedrooms:
+            continue
+
+        neighborhood = location_map.get(listing_url, locality)
+        if listing_url:
+            seen_urls.add(listing_url)
+
+        results.append(Listing(
+            id=make_id("craigslist", listing_url or f"cl-{i}"),
+            source="craigslist",
+            title=name[:100] if name else f"Craigslist - {locality}",
+            address=f"{locality}, {region}" if locality else f"{city}, {state.upper()}",
+            neighborhood=neighborhood or locality,
+            lat=float(lat) if lat else None,
+            lng=float(lng) if lng else None,
+            price_min=price,
+            price_max=price,
+            bedrooms=beds,
+            bathrooms=float(baths) if baths else 1.0,
+            furnished=False,
+            available_from=None,
+            available_to=None,
+            no_fee=False,
+            url=listing_url or base_url,
+            photo_url=None,
+            photos=[],
+            listing_type="apartment",
+        ))
+
+    return results
+
+
 async def scrape(city: str, state: str, min_price: int, max_price: int, bedrooms: list[int]) -> list[Listing]:
     subdomain = get_subdomain(city, state)
     if not subdomain:
@@ -75,108 +173,27 @@ async def scrape(city: str, state: str, min_price: int, max_price: int, bedrooms
         return []
 
     listings: list[Listing] = []
-    url = f"https://{subdomain}.craigslist.org/search/apa"
+    seen_urls: set[str] = set()
+    base_url = f"https://{subdomain}.craigslist.org/search/apa"
 
     async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-        try:
-            resp = await client.get(url, headers=HEADERS)
-        except Exception as e:
-            log.error("Failed to load %s: %s", url, e)
-            return []
+        for page in range(CL_MAX_PAGES):
+            offset = page * CL_PAGE_SIZE
+            url = base_url if page == 0 else f"{base_url}?s={offset}"
 
-        text = resp.text
-
-        # Extract JSON-LD with listing data
-        ld_matches = re.findall(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', text, re.DOTALL)
-        ld_items: list[dict] = []
-        for m in ld_matches:
             try:
-                data = json.loads(m)
-                if isinstance(data, dict) and data.get("itemListElement"):
-                    ld_items = data["itemListElement"]
-                    break
-            except Exception:
-                continue
+                resp = await client.get(url, headers=HEADERS)
+            except Exception as e:
+                log.error("Failed to load %s page %d: %s", base_url, page, e)
+                break
 
-        # Extract prices from HTML cards
-        # Pattern: <li class="cl-static-search-result" ...> <a href="URL"> <div class="price">$X,XXX</div>
-        price_map: dict[str, int] = {}
-        cards = re.findall(
-            r'<li class="cl-static-search-result"[^>]*>.*?<a href="([^"]+)".*?<div class="price">\$?([\d,]+)</div>',
-            text, re.DOTALL,
-        )
-        for href, price_str in cards:
-            price_map[href] = int(price_str.replace(",", ""))
+            new = _parse_page(resp.text, city, state, base_url, min_price, max_price, bedrooms, seen_urls)
+            listings.extend(new)
+            log.debug("CL page %d: %d new listings (total: %d)", page, len(new), len(listings))
 
-        # Also extract locations from cards
-        location_map: dict[str, str] = {}
-        loc_cards = re.findall(
-            r'<a href="([^"]+)".*?<div class="location">\s*([^<]+)',
-            text, re.DOTALL,
-        )
-        for href, loc in loc_cards:
-            location_map[href] = loc.strip()
+            # Stop if page returned no new results (end of listings)
+            if not new:
+                break
 
-        # Extract listing URLs in order (to match with JSON-LD items)
-        listing_urls = re.findall(r'href="(https://[^"]*craigslist[^"]*\.html)"', text)
-        url_set = list(dict.fromkeys(listing_urls))  # dedupe preserving order
-
-        log.debug("JSON-LD items: %d, price cards: %d, URLs: %d", len(ld_items), len(price_map), len(url_set))
-
-        for i, ld_entry in enumerate(ld_items):
-            item = ld_entry.get("item", {})
-
-            lat = item.get("latitude")
-            lng = item.get("longitude")
-            name = item.get("name", "")
-            beds = item.get("numberOfBedrooms")
-            baths = item.get("numberOfBathroomsTotal", 1)
-            addr_obj = item.get("address", {})
-            locality = addr_obj.get("addressLocality", "")
-            region = addr_obj.get("addressRegion", "")
-
-            # Match to URL and price
-            listing_url = url_set[i] if i < len(url_set) else ""
-            price = price_map.get(listing_url, 0)
-
-            # Try extracting price from name if not in HTML
-            if not price:
-                price_match = re.search(r"\$(\d[\d,]*)", name)
-                if price_match:
-                    price = int(price_match.group(1).replace(",", ""))
-
-            if not price:
-                continue
-            if price < min_price or price > max_price:
-                continue
-
-            beds = int(beds) if beds else 1
-            if beds not in bedrooms:
-                continue
-
-            neighborhood = location_map.get(listing_url, locality)
-
-            listings.append(Listing(
-                id=make_id("craigslist", listing_url or f"cl-{i}"),
-                source="craigslist",
-                title=name[:100] if name else f"Craigslist - {locality}",
-                address=f"{locality}, {region}" if locality else f"{city}, {state.upper()}",
-                neighborhood=neighborhood or locality,
-                lat=float(lat) if lat else None,
-                lng=float(lng) if lng else None,
-                price_min=price,
-                price_max=price,
-                bedrooms=beds,
-                bathrooms=float(baths) if baths else 1.0,
-                furnished=False,
-                available_from=None,
-                available_to=None,
-                no_fee=False,
-                url=listing_url or url,
-                photo_url=None,
-                photos=[],
-                listing_type="apartment",
-            ))
-
-    log.info("%d listings from %s.craigslist.org", len(listings), subdomain)
+    log.info("%d listings from %s.craigslist.org (%d pages)", len(listings), subdomain, min(len(listings) // max(CL_PAGE_SIZE, 1) + 1, CL_MAX_PAGES))
     return listings
