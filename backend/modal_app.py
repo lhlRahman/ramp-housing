@@ -23,7 +23,7 @@ image = (
         "websockets>=14.0,<15",
     )
     .run_commands("playwright install --with-deps chromium")
-    .add_local_dir(".", remote_path="/app", ignore=["venv", ".next*", "__pycache__", "*.pyc"])
+    .add_local_dir(".", remote_path="/app", ignore=["venv", ".next*", "__pycache__", "*.pyc", ".git"])
 )
 
 

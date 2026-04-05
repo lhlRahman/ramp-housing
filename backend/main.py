@@ -730,7 +730,7 @@ async def health():
     return {"status": "ok"}
 
 
-@app.delete("/api/cache")
+@app.post("/api/cache/clear")
 async def clear_scrape_cache(source: str = Query(""), city: str = Query("")):
     """Clear scrape cache. Optional filters: source, city. No params = clear all."""
     conn = db.get_conn()
