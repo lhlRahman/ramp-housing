@@ -8,6 +8,7 @@ import { toast } from "sonner";
 interface Props {
   existingProfile: RenterProfile | null;
   defaultPhone?: string;
+  defaultName?: string;
   onSaved: (profile: RenterProfile) => void;
   onClose: () => void;
 }
@@ -23,9 +24,9 @@ const modalVariants = {
   exit: { opacity: 0, scale: 0.97, y: 10, transition: { duration: 0.15 } },
 };
 
-export default function RenterProfileModal({ existingProfile, defaultPhone, onSaved, onClose }: Props) {
+export default function RenterProfileModal({ existingProfile, defaultPhone, defaultName, onSaved, onClose }: Props) {
   const [phone, setPhone] = useState(existingProfile?.phone || defaultPhone || "");
-  const [name, setName] = useState(existingProfile?.name || "");
+  const [name, setName] = useState(existingProfile?.name || defaultName || "");
   const [currentCity, setCurrentCity] = useState(existingProfile?.current_city || "");
   const [moveInDate, setMoveInDate] = useState(existingProfile?.move_in_date || "");
   const [budgetMax, setBudgetMax] = useState(existingProfile?.budget_max?.toString() || "");

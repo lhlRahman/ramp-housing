@@ -1,0 +1,8 @@
+<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background rounded square -->
+  <rect width="40" height="40" rx="10" fill="#EBF123"/>
+  <!-- House/building shape -->
+  <path d="M20 8L8 18H12V30H18V23H22V30H28V18H32L20 8Z" fill="#0A0A0A"/>
+  <!-- Window -->
+  <rect x="17" y="14" width="6" height="5" rx="1" fill="#EBF123"/>
+</svg>

@@ -522,6 +522,7 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
           <RenterProfileModal
             existingProfile={renterProfile}
             defaultPhone={authUser.phone}
+            defaultName={authUser.name || undefined}
             onSaved={(profile) => {
               setRenterProfile(profile);
               setShowProfileModal(false);

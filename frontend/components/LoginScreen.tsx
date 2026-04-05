@@ -105,9 +105,7 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
           transition={{ delay: 0.1, duration: 0.5 }}
         >
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-ramp-lime/10 mb-4">
-            <div className="w-9 h-9 rounded-xl bg-ramp-lime flex items-center justify-center">
-              <span className="text-surface-0 text-lg font-bold tracking-tight">R</span>
-            </div>
+            <img src="/logo.svg" alt="RampHousing" className="w-10 h-10 rounded-xl" />
           </div>
           <h1 className="text-2xl font-bold text-text-primary tracking-tight">RampHousing</h1>
           <p className="text-text-muted text-sm mt-1">Find your next home, powered by AI</p>

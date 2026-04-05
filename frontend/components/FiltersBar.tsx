@@ -53,13 +53,13 @@ export default function FiltersBar({
       <div className="flex items-center gap-3">
         {/* Brand */}
         <div className="flex items-center gap-2 shrink-0">
-          <motion.div
-            className="w-7 h-7 rounded-lg bg-ramp-lime flex items-center justify-center"
+          <motion.img
+            src="/logo.svg"
+            alt="RampHousing"
+            className="w-7 h-7 rounded-lg"
             whileHover={{ scale: 1.1, rotate: 5 }}
             whileTap={{ scale: 0.95 }}
-          >
-            <span className="text-surface-0 text-xs font-bold">R</span>
-          </motion.div>
+          />
           <span className="text-sm font-semibold text-text-primary tracking-tight">Housing</span>
         </div>
 
