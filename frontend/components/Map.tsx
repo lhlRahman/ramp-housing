@@ -11,6 +11,7 @@ interface Props {
   center: [number, number];
   zoom: number;
   loading?: boolean;
+  initialPolygon?: [number, number][] | null;
   onPolygonChange: (polygon: [number, number][] | null) => void;
   onSelectListing: (id: string) => void;
   onOpenDetail: (id: string) => void;
@@ -23,7 +24,7 @@ interface HoverPreview {
   y: number;
 }
 
-export default function Map({ listings, selectedId, center, zoom, loading, onPolygonChange, onSelectListing, onOpenDetail, onDrawStart }: Props) {
+export default function Map({ listings, selectedId, center, zoom, loading, initialPolygon, onPolygonChange, onSelectListing, onOpenDetail, onDrawStart }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const markersRef = useRef<globalThis.Map<string, Marker>>(new globalThis.Map());
@@ -36,6 +37,8 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
   const [hoverPreview, setHoverPreview] = useState<HoverPreview | null>(null);
   const setHoverPreviewRef = useRef(setHoverPreview);
   const hoveredListingRef = useRef<Listing | null>(null);
+
+  const initialPolygonRef = useRef(initialPolygon);
 
   // Keep ref current so initMap never needs onPolygonChange as a dependency
   useEffect(() => { onPolygonChangeRef.current = onPolygonChange; }, [onPolygonChange]);
@@ -172,6 +175,18 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
       setIsDrawing(false);
       map.dragging.enable();
     });
+
+    // Restore persisted polygon if available
+    if (initialPolygonRef.current && initialPolygonRef.current.length >= 3) {
+      const restoredLayer = L.polygon(
+        initialPolygonRef.current.map(([lat, lng]) => [lat, lng] as [number, number]),
+        drawPathOptions,
+      ).addTo(map);
+      polygonLayerRef.current = restoredLayer;
+      disablePolygonInteractivity(restoredLayer);
+      setHasPolygon(true);
+      map.fitBounds(restoredLayer.getBounds(), { padding: [40, 40] });
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disablePolygonInteractivity]);
 
