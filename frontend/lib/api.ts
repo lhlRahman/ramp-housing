@@ -1,4 +1,4 @@
-import { Listing, SearchFilters, SearchResult, ListingDetail, SourceStatus, RenterProfile, OutreachItem } from "./types";
+import { Listing, SearchFilters, SearchResult, ListingDetail, SourceStatus, RenterProfile, OutreachItem, AuthUser } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const WS_BASE = API_BASE.replace(/^http/, "ws");
@@ -126,5 +126,56 @@ export async function getOutreachDashboard(phone: string): Promise<{ count: numb
 export async function getOutreachDetail(outreachId: string): Promise<OutreachItem & { events: any[] }> {
   const resp = await fetch(`${API_BASE}/api/outreach/${encodeURIComponent(outreachId)}`);
   if (!resp.ok) throw new Error(`Outreach error: ${resp.status}`);
+  return resp.json();
+}
+
+// ── Auth ────────────────────────────────────────────────────────
+
+export function getAuthToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("auth_token");
+}
+
+export function setAuthToken(token: string) {
+  localStorage.setItem("auth_token", token);
+}
+
+export function clearAuth() {
+  localStorage.removeItem("auth_token");
+  localStorage.removeItem("auth_user");
+}
+
+export async function sendOTP(phone: string): Promise<void> {
+  const resp = await fetch(`${API_BASE}/api/auth/send-otp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone }),
+  });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error(data.detail || `Error: ${resp.status}`);
+  }
+}
+
+export async function verifyOTP(phone: string, code: string): Promise<{ token: string; user: AuthUser }> {
+  const resp = await fetch(`${API_BASE}/api/auth/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone, code }),
+  });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error(data.detail || `Error: ${resp.status}`);
+  }
+  return resp.json();
+}
+
+export async function getMe(): Promise<{ user_id: string; phone: string; name: string | null; profile: RenterProfile | null }> {
+  const token = getAuthToken();
+  if (!token) throw new Error("Not authenticated");
+  const resp = await fetch(`${API_BASE}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) throw new Error(`Auth error: ${resp.status}`);
   return resp.json();
 }

@@ -908,10 +908,99 @@ async def retell_outbound_call(body: RetellOutboundCallRequest) -> dict[str, Any
     return await client.create_phone_call(body)
 
 
-# ── Renter Profile ──────────────────────────────────────────────────────
-
+# ── Auth ────────────────────────────────────────────────────────────────
 
 _PHONE_RE = re.compile(r"^\+?1?\d{10,15}$")
+
+
+def _clean_phone(phone: str) -> str:
+    cleaned = phone.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    if not _PHONE_RE.match(cleaned):
+        raise HTTPException(status_code=400, detail="Invalid phone number")
+    cleaned = cleaned.lstrip("+")
+    if len(cleaned) == 10:
+        cleaned = f"1{cleaned}"
+    return cleaned
+
+
+def _get_current_user(request: Request) -> dict[str, Any] | None:
+    """Extract user from Authorization header. Returns None if no/invalid token."""
+    auth = request.headers.get("Authorization", "")
+    token = auth.removeprefix("Bearer ").strip()
+    if not token:
+        return None
+    return db.get_session(token)
+
+
+def _require_user(request: Request) -> dict[str, Any]:
+    """Like _get_current_user but raises 401 if not authenticated."""
+    user = _get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+
+class SendOTPRequest(BaseModel):
+    phone: str = Field(min_length=10, max_length=20)
+
+
+class VerifyOTPRequest(BaseModel):
+    phone: str = Field(min_length=10, max_length=20)
+    code: str = Field(min_length=6, max_length=6)
+
+
+@app.post("/api/auth/send-otp")
+async def auth_send_otp(body: SendOTPRequest) -> dict[str, Any]:
+    phone = _clean_phone(body.phone)
+    # Generate 6-digit code
+    import random
+    code = f"{random.randint(0, 999999):06d}"
+    db.store_otp(phone, code)
+    # Send via Twilio
+    try:
+        await _send_twilio_sms(f"+{phone}", f"Your RampHousing code is {code}. Expires in 5 minutes.")
+    except Exception as exc:
+        log.error("Failed to send OTP to %s: %s", phone, exc)
+        raise HTTPException(status_code=502, detail="Failed to send verification code")
+    return {"ok": True, "message": "Code sent"}
+
+
+@app.post("/api/auth/verify")
+async def auth_verify(body: VerifyOTPRequest) -> dict[str, Any]:
+    phone = _clean_phone(body.phone)
+    if not db.verify_otp(phone, body.code):
+        raise HTTPException(status_code=401, detail="Invalid or expired code")
+    user = db.get_or_create_user(phone)
+    token = uuid.uuid4().hex + uuid.uuid4().hex  # 64-char token
+    db.create_session(user["user_id"], token)
+    # Auto-create renter profile if doesn't exist
+    profile = get_renter_profile(phone)
+    if not profile:
+        upsert_renter_profile(phone=phone, name=user.get("name"))
+    return {
+        "ok": True,
+        "token": token,
+        "user": {
+            "user_id": user["user_id"],
+            "phone": user["phone"],
+            "name": user["name"],
+        },
+    }
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request) -> dict[str, Any]:
+    user = _require_user(request)
+    profile = get_renter_profile(user["phone"])
+    return {
+        "user_id": user["user_id"],
+        "phone": user["phone"],
+        "name": user["name"],
+        "profile": profile,
+    }
+
+
+# ── Renter Profile ──────────────────────────────────────────────────────
 VALID_OUTREACH_STATUSES = {
     "pending", "contacted", "responded", "touring",
     "ghosted", "rejected", "scam_flagged", "no_phone", "error",
@@ -935,9 +1024,7 @@ class RenterProfileRequest(BaseModel):
 
 @app.post("/api/renter/profile")
 async def api_upsert_renter_profile(body: RenterProfileRequest) -> dict[str, Any]:
-    cleaned_phone = body.phone.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
-    if not _PHONE_RE.match(cleaned_phone):
-        raise HTTPException(status_code=400, detail="Invalid phone number format")
+    cleaned_phone = _clean_phone(body.phone)
     profile = upsert_renter_profile(
         phone=cleaned_phone,
         name=body.name,
@@ -1152,9 +1239,7 @@ async def _build_sms_parts(dyn_vars: dict[str, str]) -> list[str]:
 @app.post("/api/outreach/start")
 async def api_start_outreach(body: StartOutreachRequest) -> dict[str, Any]:
     """Start parallel outreach to multiple landlords on behalf of the renter."""
-    cleaned_phone = body.renter_phone.strip().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
-    if not _PHONE_RE.match(cleaned_phone):
-        raise HTTPException(status_code=400, detail="Invalid renter phone number")
+    cleaned_phone = _clean_phone(body.renter_phone)
     profile = get_renter_profile(cleaned_phone)
     if not profile:
         raise HTTPException(status_code=400, detail="Renter profile required before outreach")

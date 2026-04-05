@@ -150,3 +150,11 @@ export const OUTREACH_STATUS_COLORS: Record<string, string> = {
   no_phone: "#6b7280",
   error: "#ef4444",
 };
+
+// ── Auth ────────────────────────────────────────────────────────
+
+export interface AuthUser {
+  user_id: string;
+  phone: string;
+  name: string | null;
+}

@@ -118,6 +118,35 @@ def init_db():
                 answered_at INTEGER
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id TEXT PRIMARY KEY,
+                phone TEXT UNIQUE NOT NULL,
+                name TEXT,
+                created_at INTEGER NOT NULL,
+                last_login_at INTEGER NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS auth_otps (
+                phone TEXT NOT NULL,
+                code TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                used INTEGER DEFAULT 0
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS auth_sessions (
+                token TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_auth_otps_phone ON auth_otps(phone, expires_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id)")
         # Clean up stale caches. Scrape cache can be permanent by setting TTL <= 0.
         now = int(time.time())
         n_scrape = 0
@@ -614,5 +643,96 @@ def list_retell_escalations(status: str | None = None, limit: int = 100) -> list
             }
             for row in rows
         ]
+    finally:
+        conn.close()
+
+
+# ── Auth ────────────────────────────────────────────────────────────────
+
+def store_otp(phone: str, code: str, ttl: int = 300) -> None:
+    now = int(time.time())
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE auth_otps SET used = 1 WHERE phone = ? AND used = 0", (phone,))
+        conn.execute(
+            "INSERT INTO auth_otps (phone, code, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            (phone, code, now, now + ttl),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def verify_otp(phone: str, code: str) -> bool:
+    now = int(time.time())
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT rowid FROM auth_otps WHERE phone = ? AND code = ? AND used = 0 AND expires_at > ?",
+            (phone, code, now),
+        ).fetchone()
+        if not row:
+            return False
+        conn.execute("UPDATE auth_otps SET used = 1 WHERE rowid = ?", (row["rowid"],))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
+def get_or_create_user(phone: str) -> dict[str, Any]:
+    now = int(time.time())
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT * FROM users WHERE phone = ?", (phone,)).fetchone()
+        if row:
+            conn.execute("UPDATE users SET last_login_at = ? WHERE user_id = ?", (now, row["user_id"]))
+            conn.commit()
+            return dict(row)
+        import uuid
+        user_id = f"user_{uuid.uuid4().hex[:16]}"
+        conn.execute(
+            "INSERT INTO users (user_id, phone, created_at, last_login_at) VALUES (?, ?, ?, ?)",
+            (user_id, phone, now, now),
+        )
+        conn.commit()
+        return {"user_id": user_id, "phone": phone, "name": None, "created_at": now, "last_login_at": now}
+    finally:
+        conn.close()
+
+
+def create_session(user_id: str, token: str, ttl: int = 30 * 86400) -> None:
+    now = int(time.time())
+    conn = get_conn()
+    try:
+        conn.execute(
+            "INSERT INTO auth_sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+            (token, user_id, now, now + ttl),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_session(token: str) -> dict[str, Any] | None:
+    now = int(time.time())
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """SELECT s.*, u.phone, u.name FROM auth_sessions s
+               JOIN users u ON u.user_id = s.user_id
+               WHERE s.token = ? AND s.expires_at > ?""",
+            (token, now),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def update_user_name(user_id: str, name: str) -> None:
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE users SET name = ? WHERE user_id = ?", (name, user_id))
+        conn.commit()
     finally:
         conn.close()

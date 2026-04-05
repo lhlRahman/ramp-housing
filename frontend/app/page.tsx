@@ -6,8 +6,9 @@ import FiltersBar from "@/components/FiltersBar";
 import ListingCard from "@/components/ListingCard";
 import ListingDetail from "@/components/ListingDetail";
 import RenterProfileModal from "@/components/RenterProfileModal";
-import { Listing, RenterProfile, SortOption, SOURCE_LABELS, SOURCE_COLORS } from "@/lib/types";
-import { getRenterProfile } from "@/lib/api";
+import LoginScreen from "@/components/LoginScreen";
+import { Listing, RenterProfile, SortOption, SOURCE_LABELS, SOURCE_COLORS, AuthUser } from "@/lib/types";
+import { getRenterProfile, getAuthToken, getMe, clearAuth } from "@/lib/api";
 import { useSearchFilters } from "@/hooks/useSearchFilters";
 import { usePromptFilters } from "@/hooks/usePromptFilters";
 import { useHousingSearch } from "@/hooks/useHousingSearch";
@@ -26,6 +27,46 @@ function sortListings(listings: Listing[], sort: SortOption): Listing[] {
 }
 
 export default function Home() {
+  const router = useRouter();
+
+  // ── Auth ──────────────────────────────────────────────────────
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  useEffect(() => {
+    const token = getAuthToken();
+    if (!token) { setAuthChecked(true); return; }
+    // Try to restore session
+    const stored = localStorage.getItem("auth_user");
+    if (stored) {
+      try { setAuthUser(JSON.parse(stored)); } catch { /* ignore */ }
+    }
+    // Validate token with backend
+    getMe().then((data) => {
+      const user: AuthUser = { user_id: data.user_id, phone: data.phone, name: data.name };
+      setAuthUser(user);
+      localStorage.setItem("auth_user", JSON.stringify(user));
+      if (data.profile) {
+        localStorage.setItem("renter_profile", JSON.stringify(data.profile));
+      }
+    }).catch(() => {
+      clearAuth();
+      setAuthUser(null);
+    }).finally(() => setAuthChecked(true));
+  }, []);
+
+  if (!authChecked) {
+    return <div className="min-h-screen bg-surface-0 flex items-center justify-center"><div className="text-text-secondary text-sm">Loading...</div></div>;
+  }
+
+  if (!authUser) {
+    return <LoginScreen onLogin={(user) => { setAuthUser(user); }} />;
+  }
+
+  return <AuthenticatedApp authUser={authUser} onLogout={() => { clearAuth(); setAuthUser(null); }} />;
+}
+
+function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout: () => void }) {
   const router = useRouter();
   const [polygon, setPolygon] = useState<[number, number][] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -285,6 +326,15 @@ export default function Home() {
                   </svg>
                 </button>
               )}
+              <button
+                onClick={onLogout}
+                className="w-8 h-8 rounded-full bg-surface-3 text-text-muted hover:text-red-400 hover:bg-surface-4 flex items-center justify-center transition-colors"
+                title={`Sign out (${authUser.phone})`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
+                </svg>
+              </button>
               {listings.length > 1 && (
                 <select value={sort} onChange={(e) => setSort(e.target.value as SortOption)} className="text-xs bg-surface-2 border border-border text-text-secondary rounded-lg px-2 py-1 cursor-pointer">
                   <option value="price_asc">Price up</option>
@@ -367,6 +417,7 @@ export default function Home() {
       {showProfileModal && (
         <RenterProfileModal
           existingProfile={renterProfile}
+          defaultPhone={authUser.phone}
           onSaved={(profile) => {
             setRenterProfile(profile);
             setShowProfileModal(false);

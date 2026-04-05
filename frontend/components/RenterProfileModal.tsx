@@ -5,12 +5,13 @@ import { upsertRenterProfile } from "@/lib/api";
 
 interface Props {
   existingProfile: RenterProfile | null;
+  defaultPhone?: string;
   onSaved: (profile: RenterProfile) => void;
   onClose: () => void;
 }
 
-export default function RenterProfileModal({ existingProfile, onSaved, onClose }: Props) {
-  const [phone, setPhone] = useState(existingProfile?.phone || "");
+export default function RenterProfileModal({ existingProfile, defaultPhone, onSaved, onClose }: Props) {
+  const [phone, setPhone] = useState(existingProfile?.phone || defaultPhone || "");
   const [name, setName] = useState(existingProfile?.name || "");
   const [currentCity, setCurrentCity] = useState(existingProfile?.current_city || "");
   const [moveInDate, setMoveInDate] = useState(existingProfile?.move_in_date || "");
