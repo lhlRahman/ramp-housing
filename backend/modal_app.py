@@ -32,7 +32,7 @@ image = (
     secrets=[modal.Secret.from_name("ramp-housing-secrets")],
     volumes={"/data": volume},
     scaledown_window=300,
-    timeout=600,
+    timeout=900,
 )
 @modal.concurrent(max_inputs=100)
 @modal.asgi_app()

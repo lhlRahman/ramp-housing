@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import time
 
 import httpx
 
@@ -11,10 +10,6 @@ log = logging.getLogger(__name__)
 
 PHOTON_API = "https://photon.komoot.io/api"
 PHOTON_REVERSE = "https://photon.komoot.io/reverse"
-
-_last_request = 0.0
-_lock = asyncio.Lock()
-_MIN_INTERVAL = 0.2  # Photon is more lenient, but be polite
 _client_lock = asyncio.Lock()
 _client: httpx.AsyncClient | None = None
 
@@ -29,6 +24,7 @@ async def _get_client() -> httpx.AsyncClient:
             _client = httpx.AsyncClient(
                 timeout=10,
                 headers={"User-Agent": NOMINATIM_USER_AGENT},
+                limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
             )
     return _client
 
@@ -44,16 +40,6 @@ async def shutdown():
         _client = None
 
 
-async def _throttle():
-    """Ensure minimum interval between requests."""
-    global _last_request
-    async with _lock:
-        wait = _MIN_INTERVAL - (time.monotonic() - _last_request)
-        if wait > 0:
-            await asyncio.sleep(wait)
-        _last_request = time.monotonic()
-
-
 async def geocode(address: str) -> tuple[float, float] | None:
     """Forward-geocode an address to (lat, lng). Cached in SQLite.
     Failures are also cached so they are never retried."""
@@ -62,17 +48,19 @@ async def geocode(address: str) -> tuple[float, float] | None:
         lat, lng = cached
         return (lat, lng) if lat is not None else None  # None,None = cached failure
 
-    await _throttle()
-
     try:
         client = await _get_client()
         resp = await client.get(
             PHOTON_API,
             params={"q": address, "limit": 1},
         )
+        if resp.status_code == 429:
+            # Rate limited — back off and retry once
+            await asyncio.sleep(1.0)
+            resp = await client.get(PHOTON_API, params={"q": address, "limit": 1})
         if resp.status_code != 200:
             log.debug("Photon returned %d for '%s'", resp.status_code, address)
-            cache_coords(address, None, None)  # Cache failure — don't retry
+            cache_coords(address, None, None)
             return None
         data = resp.json()
         features = data.get("features", [])
@@ -82,10 +70,9 @@ async def geocode(address: str) -> tuple[float, float] | None:
             cache_coords(address, lat, lng)
             return lat, lng
         log.debug("No geocode result for '%s'", address)
-        cache_coords(address, None, None)  # Cache failure — don't retry
+        cache_coords(address, None, None)
     except Exception as e:
         log.warning("Geocode failed for '%s': %s", address, e)
-        # Don't cache network/timeout errors — they may be transient
 
     return None
 
@@ -94,7 +81,6 @@ async def reverse_geocode(lat: float, lng: float) -> dict | None:
     """Reverse-geocode (lat, lng) to {city, state, country_code, display_name}.
     Uses Nominatim with zoom=10 (city level) to reliably get city names
     instead of nearby POIs like restaurants."""
-    await _throttle()
 
     try:
         client = await _get_client()

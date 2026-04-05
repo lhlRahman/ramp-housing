@@ -42,8 +42,8 @@ def _parse_items(
             if beds_min != 0 or 0 not in bedrooms:
                 continue
 
-        lat = item.get("lat")
-        lng = item.get("lng")
+        lat = item.get("lat") or item.get("latitude")
+        lng = item.get("lng") or item.get("longitude")
         address = item.get("address", "")
         city = item.get("city", "")
         state = item.get("state", "")

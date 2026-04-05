@@ -16,9 +16,15 @@ async def refresh_session():
 
 
 async def scrape(city_slug: str | None, check_in: str | None, check_out: str | None, min_price: int, max_price: int, bedrooms: list[int]) -> list[Listing]:
-    if not city_slug or not check_in or not check_out:
-        log.info("Skipping — requires city_slug, check_in, and check_out")
+    if not city_slug:
         return []
+
+    # Default to 3-month window if no dates provided
+    if not check_in or not check_out:
+        from datetime import date, timedelta
+        today = date.today()
+        check_in = (today + timedelta(days=7)).isoformat()
+        check_out = (today + timedelta(days=97)).isoformat()
 
     listings: list[Listing] = []
     map_data: dict = {}
@@ -54,9 +60,9 @@ async def scrape(city_slug: str | None, check_in: str | None, check_out: str | N
             except Exception:
                 pass
 
-            for _ in range(15):
+            for _ in range(30):
                 await page.evaluate("window.scrollBy(0, 1500)")
-                await page.wait_for_timeout(600)
+                await page.wait_for_timeout(500)
 
             cards = await page.evaluate(r"""
                 () => {

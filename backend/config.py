@@ -23,7 +23,7 @@ SCRAPE_CACHE_TTL_SECONDS = int(os.getenv("SCRAPE_CACHE_TTL_SECONDS", "0"))
 
 # Geocoder (Photon — free, no rate limits, OSM-based)
 NOMINATIM_USER_AGENT = os.getenv("GEOCODER_USER_AGENT", "ramp-intern-housing/1.0 (hackathon project)")
-GEOCODER_CONCURRENCY = int(os.getenv("GEOCODER_CONCURRENCY", "6"))
+GEOCODER_CONCURRENCY = int(os.getenv("GEOCODER_CONCURRENCY", "40"))
 
 # Scraper defaults
 SCRAPER_TIMEOUT = int(os.getenv("SCRAPER_TIMEOUT", "40000"))  # ms for Playwright page loads

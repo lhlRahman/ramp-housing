@@ -407,6 +407,9 @@ async def ws_search(websocket: WebSocket):
             if persist_processed_cache and _count_listings_with_coords(batch) > original_with_coords:
                 cache_scrape(src_name, city_key, params_hash, [listing.model_dump() for listing in batch])
             with_coords = [l for l in batch if l.lat is not None and l.lng is not None]
+            without = len(batch) - len(with_coords)
+            if without > 0:
+                log.warning("%s: %d/%d listings missing coords after geocoding", src_name, without, len(batch))
             in_poly = [l for l in with_coords if l.lat is not None and l.lng is not None and point_in_polygon(l.lat, l.lng, poly)]
             final = deduplicate(in_poly)
             # Cross-batch dedup

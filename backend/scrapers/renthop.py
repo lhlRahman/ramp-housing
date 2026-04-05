@@ -86,8 +86,8 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
             page = await ctx.new_page()
 
             try:
-                await page.goto(page_url, wait_until="domcontentloaded", timeout=20000)
-                await page.wait_for_timeout(3000)
+                await page.goto(page_url, wait_until="domcontentloaded", timeout=45000)
+                await page.wait_for_timeout(4000)
 
                 raw_listings = await page.evaluate("""
                     () => {
