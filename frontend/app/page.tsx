@@ -34,13 +34,18 @@ export default function Home() {
   const [showEmptyState, setShowEmptyState] = useState(true);
 
   // Renter profile
-  const [renterProfile, setRenterProfile] = useState<RenterProfile | null>(() => {
-    if (typeof window === "undefined") return null;
+  const [renterProfile, setRenterProfile] = useState<RenterProfile | null>(null);
+  const [profileHydrated, setProfileHydrated] = useState(false);
+  useEffect(() => {
     try {
       const stored = localStorage.getItem("renter_profile");
-      return stored ? JSON.parse(stored) : null;
-    } catch { return null; }
-  });
+      setRenterProfile(stored ? JSON.parse(stored) : null);
+    } catch {
+      setRenterProfile(null);
+    } finally {
+      setProfileHydrated(true);
+    }
+  }, []);
   const [showProfileModal, setShowProfileModal] = useState(false);
   // When user tries to contact without a profile, we store intent and show profile modal first
   const [pendingContactListing, setPendingContactListing] = useState<Listing | null>(null);
@@ -87,22 +92,21 @@ export default function Home() {
 
   // Persist profile to localStorage
   useEffect(() => {
+    if (!profileHydrated) return;
     if (renterProfile) {
       localStorage.setItem("renter_profile", JSON.stringify(renterProfile));
     } else {
       localStorage.removeItem("renter_profile");
     }
-  }, [renterProfile]);
+  }, [profileHydrated, renterProfile]);
 
   // Auto-load seeded test profile if none stored (dev only)
   useEffect(() => {
-    if (!renterProfile && process.env.NODE_ENV === "development") {
-      getRenterProfile("16477732191").then(p => {
-        if (p) setRenterProfile(p);
-      }).catch(() => {});
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!profileHydrated || renterProfile || process.env.NODE_ENV !== "development") return;
+    getRenterProfile("16477732191").then(p => {
+      if (p) setRenterProfile(p);
+    }).catch(() => {});
+  }, [profileHydrated, renterProfile]);
 
   // Escape key closes modals
   useEffect(() => {

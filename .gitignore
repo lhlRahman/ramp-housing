@@ -37,3 +37,4 @@ FurnishedFinder_*.json
 Blueground_*.json
 *.tsbuildinfo
 .claude/
+.vercel

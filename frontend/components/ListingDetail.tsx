@@ -15,6 +15,7 @@ export default function ListingDetail({ listing, renterProfile, onClose, onNeedP
   const [detail, setDetail] = useState<DetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [photoIdx, setPhotoIdx] = useState(0);
+  const [selectedLandlordPhone, setSelectedLandlordPhone] = useState<string | null>(null);
 
   // Outreach state
   const [showContactForm, setShowContactForm] = useState(false);
@@ -50,21 +51,38 @@ export default function ListingDetail({ listing, renterProfile, onClose, onNeedP
     [listing.amenities, detail?.amenities],
   );
 
+  const contactNumbers = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Array<{ raw: string; normalized: string }> = [];
+    for (const raw of detail?.phone_numbers || []) {
+      const digits = raw.replace(/\D/g, "");
+      if (!digits) continue;
+      const normalizedDigits = digits.length === 10 ? `1${digits}` : digits;
+      if (!/^\d{11,15}$/.test(normalizedDigits)) continue;
+      const normalized = `+${normalizedDigits}`;
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      out.push({ raw, normalized });
+    }
+    return out;
+  }, [detail?.phone_numbers]);
+
   const color = SOURCE_COLORS[listing.source] || "#6b7280";
   const priceStr =
     listing.price_min === listing.price_max
       ? `$${listing.price_min.toLocaleString()}`
       : `$${listing.price_min.toLocaleString()}–${listing.price_max.toLocaleString()}`;
 
-  // Use scraped phone numbers — null if none found
-  const landlordPhone = (() => {
-    if (detail?.phone_numbers && detail.phone_numbers.length > 0) {
-      const digits = detail.phone_numbers[0].replace(/\D/g, "");
-      return digits.length === 10 ? `1${digits}` : digits;
-    }
-    return null;
-  })();
-  const hasPhone = !!landlordPhone;
+  useEffect(() => {
+    setSelectedLandlordPhone((prev) => {
+      if (prev && contactNumbers.some((phone) => phone.normalized === prev)) {
+        return prev;
+      }
+      return contactNumbers[0]?.normalized || null;
+    });
+  }, [contactNumbers]);
+
+  const hasPhone = !!selectedLandlordPhone;
 
   const handleContact = (selectedChannel: "call" | "text") => {
     if (!renterProfile) {
@@ -77,7 +95,7 @@ export default function ListingDetail({ listing, renterProfile, onClose, onNeedP
 
   const handleSendOutreach = async () => {
     if (!renterProfile) return;
-    if (!landlordPhone) { setOutreachError("No landlord phone number available"); return; }
+    if (!selectedLandlordPhone) { setOutreachError("No landlord phone number available"); return; }
     setSending(true);
     setOutreachError("");
     try {
@@ -97,7 +115,7 @@ export default function ListingDetail({ listing, renterProfile, onClose, onNeedP
             neighborhood: listing.neighborhood,
             description: listing.description || detail?.description || "",
           },
-          landlord_phone: `+${landlordPhone}`,
+          landlord_phone: selectedLandlordPhone,
         }],
         channel,
         custom_message: message || undefined,
@@ -234,18 +252,37 @@ export default function ListingDetail({ listing, renterProfile, onClose, onNeedP
                 )}
 
                 {/* Contact phones */}
-                {detail?.phone_numbers && detail.phone_numbers.length > 0 && (
+                {contactNumbers.length > 0 && (
                   <div>
                     <h3 className="text-[11px] font-semibold text-text-primary uppercase tracking-wider mb-2">Contact</h3>
                     <div className="space-y-1.5">
-                      {detail.phone_numbers.map((phone) => (
-                        <a key={phone} href={`tel:${phone.replace(/\D/g, "")}`} className="flex items-center gap-2 text-sm text-ramp-lime hover:text-ramp-lime-hover transition-colors">
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 002.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 01-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 00-1.091-.852H4.5A2.25 2.25 0 002.25 4.5v2.25z" />
-                          </svg>
-                          {phone}
-                        </a>
-                      ))}
+                      {contactNumbers.map((phone) => {
+                        const active = phone.normalized === selectedLandlordPhone;
+                        return (
+                          <label
+                            key={phone.normalized}
+                            className={`flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors ${
+                              active ? "border-ramp-lime bg-ramp-lime-dim" : "border-border bg-surface-2"
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="landlord-phone"
+                              checked={active}
+                              onChange={() => setSelectedLandlordPhone(phone.normalized)}
+                              className="accent-lime-400"
+                            />
+                            <span className="flex-1 text-sm text-text-primary">{phone.raw}</span>
+                            <a
+                              href={`tel:${phone.normalized}`}
+                              className="text-xs text-ramp-lime hover:text-ramp-lime-hover transition-colors"
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              Call
+                            </a>
+                          </label>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -264,6 +301,11 @@ export default function ListingDetail({ listing, renterProfile, onClose, onNeedP
                     <p className="text-xs text-text-secondary">
                       The agent will {channel === "call" ? "call" : "text"} the landlord on your behalf
                     </p>
+                    {contactNumbers.length > 1 && selectedLandlordPhone && (
+                      <div className="rounded-lg border border-border bg-surface-0/50 px-3 py-2 text-xs text-text-secondary">
+                        Using contact number: <span className="font-medium text-text-primary">{contactNumbers.find((phone) => phone.normalized === selectedLandlordPhone)?.raw || selectedLandlordPhone}</span>
+                      </div>
+                    )}
                     <div className="flex gap-2">
                       <button onClick={() => setChannel("call")} className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-all ${channel === "call" ? "border-ramp-lime bg-surface-0 text-ramp-lime" : "border-border bg-surface-2 text-text-secondary"}`}>
                         Call

@@ -31,16 +31,24 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [renterPhone] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
+  const [renterPhone, setRenterPhone] = useState<string | null>(null);
+  const [profileHydrated, setProfileHydrated] = useState(false);
+
+  useEffect(() => {
     try {
       const stored = localStorage.getItem("renter_profile");
-      return stored ? JSON.parse(stored).phone : null;
-    } catch { return null; }
-  });
+      setRenterPhone(stored ? JSON.parse(stored).phone : null);
+    } catch {
+      setRenterPhone(null);
+    } finally {
+      setProfileHydrated(true);
+      setLoading(false);
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!renterPhone) return;
+    setLoading(true);
     try {
       const data = await getOutreachDashboard(renterPhone);
       setItems(data.outreach);
@@ -71,7 +79,7 @@ export default function DashboardPage() {
     return parseEventDetail(endEvent.detail);
   };
 
-  if (!renterPhone) {
+  if (profileHydrated && !renterPhone) {
     return (
       <div className="min-h-screen bg-surface-0 flex items-center justify-center">
         <div className="text-center space-y-3">

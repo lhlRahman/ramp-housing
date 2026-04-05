@@ -4,11 +4,11 @@ import sqlite3
 import time
 from typing import Any
 
-from config import DB_PATH
+from config import DB_PATH, SCRAPE_CACHE_TTL_SECONDS
 
 log = logging.getLogger(__name__)
 
-SCRAPE_CACHE_TTL = 4 * 60 * 60  # 4 hours
+SCRAPE_CACHE_TTL = SCRAPE_CACHE_TTL_SECONDS if SCRAPE_CACHE_TTL_SECONDS > 0 else None
 
 
 def get_conn() -> sqlite3.Connection:
@@ -118,9 +118,14 @@ def init_db():
                 answered_at INTEGER
             )
         """)
-        # Clean up stale caches
+        # Clean up stale caches. Scrape cache can be permanent by setting TTL <= 0.
         now = int(time.time())
-        n_scrape = conn.execute("DELETE FROM scrape_cache WHERE cached_at < ?", (now - SCRAPE_CACHE_TTL,)).rowcount
+        n_scrape = 0
+        if SCRAPE_CACHE_TTL is not None:
+            n_scrape = conn.execute(
+                "DELETE FROM scrape_cache WHERE cached_at < ?",
+                (now - SCRAPE_CACHE_TTL,),
+            ).rowcount
         n_geo = conn.execute("DELETE FROM geocache WHERE lat IS NULL AND cached_at < ?", (now - 86400,)).rowcount
         conn.commit()
     finally:
@@ -163,7 +168,7 @@ def get_cached_scrape(source: str, city: str, params_hash: str) -> list[dict] | 
         ).fetchone()
         if row:
             age = int(time.time()) - row["cached_at"]
-            if age < SCRAPE_CACHE_TTL:
+            if SCRAPE_CACHE_TTL is None or age < SCRAPE_CACHE_TTL:
                 log.info("Cache HIT for %s (age: %dm)", cache_key, age // 60)
                 return json.loads(row["listings_json"])
         return None

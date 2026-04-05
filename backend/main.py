@@ -71,6 +71,50 @@ MAX_FOLLOWUPS = 2  # max nudge messages per outreach
 # Per-outreach locks to prevent race conditions when multiple SMS arrive simultaneously
 _outreach_locks: dict[str, asyncio.Lock] = {}
 
+# ── Background scrape registry ─────────────────────────────────────────
+# Maps cache_key -> Task[list[Listing]] so scrapes survive client disconnects
+# and concurrent requests for the same city/params reuse in-flight work.
+_inflight_scrapes: dict[str, asyncio.Task] = {}
+
+
+async def _background_scrape(
+    cache_key: str,
+    src_name: str,
+    city_key: str,
+    params_hash: str,
+    coro,
+) -> list[Listing]:
+    """Run a scraper, cache the result, and clean up the registry."""
+    try:
+        result: list[Listing] = await coro
+        cache_scrape(src_name, city_key, params_hash, [l.model_dump() for l in result])
+        log.info("Background scrape %s finished: %d listings cached", cache_key, len(result))
+        return result
+    except Exception as exc:
+        log.error("Background scrape %s failed: %s", cache_key, exc)
+        raise
+    finally:
+        _inflight_scrapes.pop(cache_key, None)
+
+
+def _get_or_start_scrape(
+    cache_key: str,
+    src_name: str,
+    city_key: str,
+    params_hash: str,
+    coro,
+) -> asyncio.Task:
+    """Return an existing in-flight task or start a new background scrape."""
+    existing = _inflight_scrapes.get(cache_key)
+    if existing is not None and not existing.done():
+        log.info("Reusing in-flight scrape for %s", cache_key)
+        return existing
+    task = asyncio.create_task(
+        _background_scrape(cache_key, src_name, city_key, params_hash, coro)
+    )
+    _inflight_scrapes[cache_key] = task
+    return task
+
 
 async def _sms_followup_loop():
     """Background loop: send follow-ups for stale SMS outreach, mark ghosted ones."""
@@ -222,6 +266,25 @@ async def geocode_listings(listings: list[Listing], geocode_suffix: str) -> list
     return listings
 
 
+def _count_listings_with_coords(listings: list[Listing]) -> int:
+    return sum(1 for listing in listings if listing.lat is not None and listing.lng is not None)
+
+
+async def _send_listings_in_chunks(
+    websocket: WebSocket,
+    source: str,
+    listings: list[Listing],
+    chunk_size: int = 200,
+) -> None:
+    for start in range(0, len(listings), chunk_size):
+        chunk = listings[start:start + chunk_size]
+        await websocket.send_json({
+            "type": "listings",
+            "source": source,
+            "listings": [listing.model_dump() for listing in chunk],
+        })
+
+
 def _build_scraper_tasks(
     city_slugs: dict[str, Any],
     check_in: str | None,
@@ -335,11 +398,14 @@ async def ws_search(websocket: WebSocket):
         total_stats = {"total_scraped": 0, "geocoded": 0, "in_polygon": 0, "returned": 0, "skipped_no_coords": 0}
         seen_ids: set[str] = set()
 
-        async def _process_and_send(src_name: str, batch: list[Listing]) -> None:
+        async def _process_and_send(src_name: str, batch: list[Listing], *, persist_processed_cache: bool = False) -> int:
             nonlocal total_stats
+            original_with_coords = _count_listings_with_coords(batch)
             if furnished:
                 batch = [l for l in batch if l.furnished]
             batch = await geocode_listings(batch, geocode_suffix)
+            if persist_processed_cache and _count_listings_with_coords(batch) > original_with_coords:
+                cache_scrape(src_name, city_key, params_hash, [listing.model_dump() for listing in batch])
             with_coords = [l for l in batch if l.lat is not None and l.lng is not None]
             in_poly = [l for l in with_coords if l.lat is not None and l.lng is not None and point_in_polygon(l.lat, l.lng, poly)]
             final = deduplicate(in_poly)
@@ -353,32 +419,70 @@ async def ws_search(websocket: WebSocket):
             total_stats["returned"] += len(final)
             total_stats["skipped_no_coords"] += len(batch) - len(with_coords)
             if final:
-                await websocket.send_json({
-                    "type": "listings",
-                    "source": src_name,
-                    "listings": [l.model_dump() for l in final],
-                })
+                await _send_listings_in_chunks(websocket, src_name, final)
+            return len(batch)
 
         # Serve cached sources immediately
         uncached_sources = []
+        cached_sources: list[tuple[str, list[Listing]]] = []
         for src in source_list:
             cached = get_cached_scrape(src, city_key, params_hash)
             if cached is not None:
                 batch = [Listing(**l) for l in cached]
-                await _process_and_send(src, batch)
-                await websocket.send_json({"type": "source_status", "source": src, "status": "done", "count": len(batch), "cached": True})
+                cached_sources.append((src, batch))
+                await websocket.send_json({"type": "source_status", "source": src, "status": "scraping", "count": len(batch), "cached": True})
             else:
                 uncached_sources.append(src)
                 await websocket.send_json({"type": "source_status", "source": src, "status": "scraping", "count": 0, "cached": False})
 
-        # Scrape uncached sources concurrently, stream as each finishes
+        if cached_sources:
+            # Favor sources that already have coordinates and smaller batches so useful
+            # results appear quickly instead of being blocked behind a large geocode job.
+            cached_sources.sort(
+                key=lambda item: (
+                    -_count_listings_with_coords(item[1]),
+                    len(item[1]),
+                )
+            )
+            task_to_meta: dict[asyncio.Task[int], tuple[str, bool]] = {}
+            for src_name, batch in cached_sources:
+                task = asyncio.create_task(_process_and_send(src_name, batch, persist_processed_cache=True))
+                task_to_meta[task] = (src_name, True)
+
+            pending = set(task_to_meta.keys())
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    src_name, cached_flag = task_to_meta[task]
+                    try:
+                        count = task.result()
+                    except Exception as exc:
+                        log.error("Cached source %s failed during processing: %s", src_name, exc)
+                        await websocket.send_json({
+                            "type": "source_status",
+                            "source": src_name,
+                            "status": "error",
+                            "count": 0,
+                            "cached": cached_flag,
+                        })
+                        continue
+                    await websocket.send_json({
+                        "type": "source_status",
+                        "source": src_name,
+                        "status": "done",
+                        "count": count,
+                        "cached": cached_flag,
+                    })
+
+        # Scrape uncached sources via background tasks (survive client disconnect)
         if uncached_sources:
             named_tasks = _build_scraper_tasks(
                 city_slugs, check_in, check_out, min_price, max_price, bed_list, uncached_sources, furnished, no_fee,
             )
             task_to_src: dict[asyncio.Task, str] = {}
             for src_name, coro in named_tasks:
-                t = asyncio.create_task(coro)
+                ck = f"{src_name}:{city_key}:{params_hash}"
+                t = _get_or_start_scrape(ck, src_name, city_key, params_hash, coro)
                 task_to_src[t] = src_name
 
             pending = set(task_to_src.keys())
@@ -393,14 +497,13 @@ async def ws_search(websocket: WebSocket):
                         await websocket.send_json({"type": "source_status", "source": src_name, "status": "error", "count": 0, "cached": False})
                         continue
                     log.info("Scraper %s returned %d listings", src_name, len(result))
-                    cache_scrape(src_name, city_key, params_hash, [l.model_dump() for l in result])
                     await _process_and_send(src_name, result)
                     await websocket.send_json({"type": "source_status", "source": src_name, "status": "done", "count": len(result), "cached": False})
 
         await websocket.send_json({"type": "done", "stats": total_stats})
 
     except WebSocketDisconnect:
-        log.info("WS client disconnected")
+        log.info("WS client disconnected — in-flight scrapes will continue caching in background")
     except Exception as e:
         log.error("WS search error: %s", e)
         try:
@@ -493,20 +596,24 @@ async def search(
         else:
             uncached_sources.append(src)
 
-    # Scrape only uncached sources
+    # Scrape only uncached sources (via background tasks that survive disconnects)
     if uncached_sources:
         named_tasks = _build_scraper_tasks(
             city_slugs, check_in, check_out, min_price, max_price, bed_list, uncached_sources, furnished, no_fee,
         )
-        results = await asyncio.gather(*[t[1] for t in named_tasks], return_exceptions=True)
+        tasks_with_names: list[tuple[str, asyncio.Task]] = []
+        for src_name, coro in named_tasks:
+            ck = f"{src_name}:{city_key}:{params_hash}"
+            t = _get_or_start_scrape(ck, src_name, city_key, params_hash, coro)
+            tasks_with_names.append((src_name, t))
 
-        for (src_name, _), result in zip(named_tasks, results):
-            if isinstance(result, Exception):
+        results = await asyncio.gather(*[t for _, t in tasks_with_names], return_exceptions=True)
+
+        for (src_name, _), result in zip(tasks_with_names, results):
+            if isinstance(result, BaseException):
                 log.error("Scraper %s failed: %s", src_name, result)
                 continue
             log.info("Scraper %s returned %d listings", src_name, len(result))
-            # Cache the results
-            cache_scrape(src_name, city_key, params_hash, [l.model_dump() for l in result])
             all_listings.extend(result)
     else:
         log.info("All %d sources served from cache", len(source_list))

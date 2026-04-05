@@ -77,6 +77,23 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
     fillOpacity: 0.08,
   };
 
+  const disablePolygonInteractivity = useCallback((layer: any) => {
+    if (!layer) return;
+    if (layer.pm?.disable) {
+      layer.pm.disable();
+    }
+    if (layer.dragging?.disable) {
+      layer.dragging.disable();
+    }
+    if (layer.options) {
+      layer.options.interactive = false;
+    }
+    const element = layer.getElement?.();
+    if (element) {
+      element.style.pointerEvents = "none";
+    }
+  }, []);
+
   const initMap = useCallback(async () => {
     if (!containerRef.current || mapRef.current) return;
 
@@ -124,6 +141,7 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
       }
       polygonLayerRef.current = e.layer;
       e.layer.setStyle(drawPathOptions);
+      disablePolygonInteractivity(e.layer);
       (map as any).pm.disableDraw();
       map.dragging.enable();
 
@@ -155,7 +173,7 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
       map.dragging.enable();
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [disablePolygonInteractivity]);
 
   useEffect(() => {
     initMap();
@@ -166,6 +184,17 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
       }
     };
   }, [initMap]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (isDrawing) {
+      map.dragging.disable();
+      setShowMenu(false);
+    } else {
+      map.dragging.enable();
+    }
+  }, [isDrawing]);
 
   // Update polygon highlight based on results / loading state
   useEffect(() => {
@@ -178,7 +207,8 @@ export default function Map({ listings, selectedId, center, zoom, loading, onPol
     } else {
       layer.setStyle({ color: "#60a5fa", weight: 1.5, fillColor: "#60a5fa", fillOpacity: 0.04 });
     }
-  }, [listings.length, loading]);
+    disablePolygonInteractivity(layer);
+  }, [disablePolygonInteractivity, listings.length, loading]);
 
   // Pan map when center changes (e.g. geolocation detected)
   useEffect(() => {

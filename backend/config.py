@@ -19,6 +19,7 @@ CORS_ORIGINS = [
 
 # Database
 DB_PATH = os.getenv("DB_PATH", os.path.join(os.path.dirname(__file__), "geocache.db"))
+SCRAPE_CACHE_TTL_SECONDS = int(os.getenv("SCRAPE_CACHE_TTL_SECONDS", "0"))
 
 # Geocoder (Photon — free, no rate limits, OSM-based)
 NOMINATIM_USER_AGENT = os.getenv("GEOCODER_USER_AGENT", "ramp-intern-housing/1.0 (hackathon project)")
