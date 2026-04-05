@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { sendOTP, verifyOTP, setAuthToken } from "@/lib/api";
 import { AuthUser } from "@/lib/types";
@@ -19,12 +19,62 @@ const fadeSlide = {
 
 export default function LoginScreen({ onLogin }: LoginScreenProps) {
   const [phone, setPhone] = useState("");
+  const [phoneDisplay, setPhoneDisplay] = useState("");
   const [code, setCode] = useState("");
+  const [otpDigits, setOtpDigits] = useState<string[]>(["", "", "", "", "", ""]);
+  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
   const [name, setName] = useState("");
   const [step, setStep] = useState<"phone" | "otp" | "name">("phone");
   const [pendingUser, setPendingUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const formatPhone = useCallback((value: string) => {
+    const digits = value.replace(/\D/g, "");
+    // Strip leading 1 for display formatting
+    const d = digits.startsWith("1") && digits.length > 10 ? digits.slice(1) : digits;
+    if (d.length <= 3) return d;
+    if (d.length <= 6) return `(${d.slice(0, 3)}) ${d.slice(3)}`;
+    return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6, 10)}`;
+  }, []);
+
+  const handlePhoneChange = useCallback((value: string) => {
+    const digits = value.replace(/\D/g, "");
+    if (digits.length <= 11) {
+      setPhone(digits);
+      setPhoneDisplay(formatPhone(digits));
+    }
+  }, [formatPhone]);
+
+  const isValidPhone = phone.replace(/\D/g, "").length >= 10;
+
+  const handleOtpChange = useCallback((index: number, value: string) => {
+    const digit = value.replace(/\D/g, "").slice(-1);
+    const next = [...otpDigits];
+    next[index] = digit;
+    setOtpDigits(next);
+    setCode(next.join(""));
+    if (digit && index < 5) {
+      otpRefs.current[index + 1]?.focus();
+    }
+  }, [otpDigits]);
+
+  const handleOtpKeyDown = useCallback((index: number, e: React.KeyboardEvent) => {
+    if (e.key === "Backspace" && !otpDigits[index] && index > 0) {
+      otpRefs.current[index - 1]?.focus();
+    }
+  }, [otpDigits]);
+
+  const handleOtpPaste = useCallback((e: React.ClipboardEvent) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+    const next = [...otpDigits];
+    for (let i = 0; i < 6; i++) next[i] = pasted[i] || "";
+    setOtpDigits(next);
+    setCode(next.join(""));
+    const focusIdx = Math.min(pasted.length, 5);
+    otpRefs.current[focusIdx]?.focus();
+  }, [otpDigits]);
 
   const handleSendOTP = async () => {
     if (!phone.trim()) return;
@@ -158,18 +208,27 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
               <motion.div key="phone" {...fadeSlide}>
                 <label className="block text-xs text-text-muted mb-1.5 font-medium uppercase tracking-wider">Phone number</label>
                 <p className="text-sm text-text-secondary mb-4">We&apos;ll send you a verification code</p>
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="+1 (555) 123-4567"
-                  className="w-full px-4 py-3 rounded-xl bg-surface-0 border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-ramp-lime/50 focus:ring-1 focus:ring-ramp-lime/20 text-sm transition-all"
-                  onKeyDown={(e) => e.key === "Enter" && handleSendOTP()}
-                  autoFocus
-                />
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 px-3 py-3 rounded-xl bg-surface-0 border border-border text-text-secondary text-sm shrink-0">
+                    <span>🇺🇸</span>
+                    <span>+1</span>
+                  </div>
+                  <input
+                    type="tel"
+                    value={phoneDisplay}
+                    onChange={(e) => handlePhoneChange(e.target.value)}
+                    placeholder="(555) 123-4567"
+                    className="w-full px-4 py-3 rounded-xl bg-surface-0 border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-ramp-lime/50 focus:ring-1 focus:ring-ramp-lime/20 text-sm transition-all"
+                    onKeyDown={(e) => e.key === "Enter" && isValidPhone && handleSendOTP()}
+                    autoFocus
+                  />
+                </div>
+                {phone.length > 0 && !isValidPhone && (
+                  <p className="text-[11px] text-red-400 mt-1.5">Enter a valid 10-digit phone number</p>
+                )}
                 <motion.button
                   onClick={handleSendOTP}
-                  disabled={loading || !phone.trim()}
+                  disabled={loading || !isValidPhone}
                   className="w-full mt-4 py-3 rounded-xl bg-ramp-lime text-surface-0 font-semibold text-sm disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                   whileHover={{ scale: 1.01 }}
                   whileTap={{ scale: 0.98 }}
@@ -183,18 +242,30 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
               <motion.div key="otp" {...fadeSlide}>
                 <label className="block text-xs text-text-muted mb-1.5 font-medium uppercase tracking-wider">Verification code</label>
                 <p className="text-sm text-text-secondary mb-4">
-                  Sent to <span className="text-text-primary font-medium">{phone}</span>
+                  Sent to <span className="text-text-primary font-medium">+1 {formatPhone(phone)}</span>
                 </p>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                  placeholder="------"
-                  className="w-full px-4 py-3 rounded-xl bg-surface-0 border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-ramp-lime/50 focus:ring-1 focus:ring-ramp-lime/20 text-sm text-center tracking-[0.4em] font-mono text-lg transition-all"
-                  onKeyDown={(e) => e.key === "Enter" && handleVerify()}
-                  autoFocus
-                />
+                <div className="flex items-center justify-center gap-2" onPaste={handleOtpPaste}>
+                  {otpDigits.map((digit, i) => (
+                    <motion.input
+                      key={i}
+                      ref={(el) => { otpRefs.current[i] = el; }}
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={1}
+                      value={digit}
+                      onChange={(e) => handleOtpChange(i, e.target.value)}
+                      onKeyDown={(e) => {
+                        handleOtpKeyDown(i, e);
+                        if (e.key === "Enter" && code.length === 6) handleVerify();
+                      }}
+                      className="w-11 h-13 rounded-xl bg-surface-0 border border-border text-text-primary text-center text-lg font-mono font-semibold focus:outline-none focus:border-ramp-lime/50 focus:ring-1 focus:ring-ramp-lime/20 transition-all"
+                      autoFocus={i === 0}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.05 }}
+                    />
+                  ))}
+                </div>
                 <motion.button
                   onClick={handleVerify}
                   disabled={loading || code.length !== 6}
@@ -205,7 +276,7 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
                   {loading ? <LoadingDots /> : "Verify"}
                 </motion.button>
                 <button
-                  onClick={() => { setStep("phone"); setCode(""); setError(""); }}
+                  onClick={() => { setStep("phone"); setCode(""); setOtpDigits(["", "", "", "", "", ""]); setError(""); }}
                   className="w-full mt-2 py-2 text-xs text-text-muted hover:text-text-secondary transition-colors"
                 >
                   Use a different number
