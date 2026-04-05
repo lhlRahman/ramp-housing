@@ -810,6 +810,46 @@ async def _send_post_call_followup(outreach_id: str, landlord_phone: str, transc
         log.error("Post-call followup SMS failed for %s: %s", outreach_id, exc)
 
 
+async def _send_renter_call_summary(outreach_id: str, renter_phone: str, transcript: str, metadata: dict) -> None:
+    """After a call ends, text the RENTER a summary of what happened."""
+    renter_name = metadata.get("renter_name") or "there"
+    outreach = get_outreach(outreach_id)
+    listing = outreach.get("listing", {}) if outreach else {}
+    listing_title = listing.get("title", "a listing")
+    addr = listing.get("address", "")
+    loc_str = f" at {addr}" if addr else ""
+
+    prompt = (
+        f"A call just ended between an AI assistant (Alex) and a landlord about: {listing_title}{loc_str}\n\n"
+        f"Transcript:\n{transcript[:3000]}\n\n"
+        f"Write a SHORT text message (under 300 chars) to the RENTER ({renter_name}) summarizing what happened on the call. "
+        f"Include any action items: tour times proposed, info the landlord asked for (budget, move-in date), "
+        f"whether the unit is available, fees mentioned, etc. "
+        f"If a tour was proposed, make that very prominent. "
+        f"Casual tone, be direct. No emojis. Return ONLY the message text."
+    )
+    try:
+        async with httpx.AsyncClient() as http:
+            resp = await http.post(
+                "https://api.x.ai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {config.XAI_API_KEY}", "Content-Type": "application/json"},
+                json={"model": "grok-3", "messages": [{"role": "user", "content": prompt}], "max_tokens": 200},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            summary_text = resp.json()["choices"][0]["message"]["content"].strip().strip('"')
+    except Exception as exc:
+        log.warning("Renter call summary generation failed: %s", exc)
+        summary_text = f"Your call about {listing_title} just finished. Check your dashboard for the full transcript and details."
+
+    try:
+        await _send_twilio_sms(renter_phone, summary_text)
+        add_outreach_event(outreach_id, "renter_call_summary", summary_text)
+        log.info("Renter call summary sent to %s for outreach %s", renter_phone, outreach_id)
+    except Exception as exc:
+        log.error("Renter call summary SMS failed for %s: %s", renter_phone, exc)
+
+
 @app.post("/api/retell/webhook")
 async def retell_webhook(request: Request) -> dict[str, Any]:
     payload = await request.json()
@@ -846,6 +886,10 @@ async def retell_webhook(request: Request) -> dict[str, Any]:
             landlord_phone = source.get("to_number") or metadata.get("landlord_phone")
             if landlord_phone and transcript:
                 asyncio.create_task(_send_post_call_followup(outreach_id, landlord_phone, transcript, metadata))
+            # Send call summary to the renter
+            renter_phone = metadata.get("renter_phone")
+            if renter_phone and transcript:
+                asyncio.create_task(_send_renter_call_summary(outreach_id, renter_phone, transcript, metadata))
         elif event_type in ("call_started", "chat_started"):
             update_outreach(outreach_id, status="contacted")
             add_outreach_event(outreach_id, "call_started")
