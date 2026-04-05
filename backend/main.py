@@ -882,20 +882,23 @@ async def retell_webhook(request: Request) -> dict[str, Any]:
             }))
             log.info("Outreach %s updated from webhook: %s", outreach_id, outreach_status)
 
-            # Only send follow-ups if the call was meaningful (not a 5-second IVR fail)
+            # Only send follow-ups if the call was meaningful (not IVR/voicemail)
             duration_ms = source.get("duration_ms") or 0
             call_successful = analysis.get("call_successful", False)
             transcript_len = len(transcript.strip()) if transcript else 0
+            # Count how many times the agent actually spoke (IVR calls have few agent lines)
+            agent_lines = len([line for line in (transcript or "").split("\n") if line.strip().startswith("Agent:")])
+            is_real_conversation = call_successful or (agent_lines >= 3 and duration_ms > 60000)
 
             # Send post-call follow-up SMS to landlord (only if real conversation happened)
             landlord_phone = source.get("to_number") or metadata.get("landlord_phone")
-            if landlord_phone and transcript_len > 200 and duration_ms > 30000:
+            if landlord_phone and transcript and is_real_conversation:
                 asyncio.create_task(_send_post_call_followup(outreach_id, landlord_phone, transcript, metadata))
             # Send call summary to the renter (only for meaningful calls)
             renter_phone = metadata.get("renter_phone")
-            if renter_phone and transcript_len > 200 and duration_ms > 30000:
+            if renter_phone and transcript and is_real_conversation:
                 asyncio.create_task(_send_renter_call_summary(outreach_id, renter_phone, transcript, metadata))
-            elif renter_phone and duration_ms <= 30000 and transcript_len < 200:
+            elif renter_phone and not is_real_conversation:
                 # Short/failed call — send a brief heads-up instead
                 outreach = get_outreach(outreach_id)
                 listing = outreach.get("listing", {}) if outreach else {}

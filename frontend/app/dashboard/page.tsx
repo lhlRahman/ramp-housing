@@ -331,8 +331,10 @@ export default function DashboardPage() {
                                   .filter(e => ["contacted", "sms_reply", "sms_sent", "followup_sent", "followup_sms", "renter_call_summary"].includes(e.event_type))
                                   .map(ev => {
                                     const d = parseEventDetail(ev.detail);
-                                    const msgBody = d?.body || (typeof ev.detail === "string" && !ev.detail.startsWith("{") ? ev.detail : "") || "";
-                                    if (!msgBody) return null;
+                                    const rawDetail = typeof ev.detail === "string" && !ev.detail.startsWith("{") ? ev.detail : "";
+                                    const msgBody = d?.body || rawDetail || "";
+                                    // Skip internal IDs and junk
+                                    if (!msgBody || /^Conversation:\s|^call_|^Chat:|^Call failed/i.test(msgBody)) return null;
                                     const isUs = ["contacted", "sms_sent", "followup_sent", "followup_sms"].includes(ev.event_type);
                                     const isSystem = ev.event_type === "renter_call_summary";
                                     const label = ev.event_type === "followup_sms" ? "To landlord" : ev.event_type === "renter_call_summary" ? "Call summary" : ev.event_type === "sms_reply" ? "Landlord" : isUs ? "You" : "";
