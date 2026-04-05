@@ -80,12 +80,14 @@ async def scrape(city_slug: str | None, min_price: int, max_price: int, bedrooms
             ctx = await br.new_context(
                 user_agent=USER_AGENT,
                 viewport={"width": 1280, "height": 900},
+                locale="en-US",
+                timezone_id="America/New_York",
             )
             page = await ctx.new_page()
 
             try:
-                await page.goto(page_url, wait_until="domcontentloaded", timeout=10000)
-                await page.wait_for_timeout(1500)
+                await page.goto(page_url, wait_until="domcontentloaded", timeout=20000)
+                await page.wait_for_timeout(3000)
 
                 raw_listings = await page.evaluate("""
                     () => {

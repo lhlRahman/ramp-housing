@@ -19,8 +19,8 @@ async def scrape(city_slug: str | None, check_in: str | None, min_price: int, ma
 
     async with shared_browser.new_page() as page:
         try:
-            await page.goto(search_url, wait_until="networkidle", timeout=40000)
-            await page.wait_for_timeout(3000)
+            await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(5000)
 
             cards = await page.evaluate("""
                 () => {

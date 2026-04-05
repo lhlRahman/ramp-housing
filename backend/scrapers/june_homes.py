@@ -37,8 +37,9 @@ async def scrape(city_slug: str | None, check_in: str | None, min_price: int, ma
                 log.warning("Page %d error: %s", page, e)
                 break
 
-            items = data.get("items", [])
+            items = data if isinstance(data, list) else data.get("items") or data.get("listings") or data.get("results") or []
             if not items:
+                log.debug("Page %d: no items found. Keys: %s", page, list(data.keys()) if isinstance(data, dict) else "list")
                 break
 
             new_this_page = 0
@@ -108,7 +109,8 @@ async def scrape(city_slug: str | None, check_in: str | None, min_price: int, ma
             else:
                 empty_pages = 0
 
-            if not data.get("next"):
+            has_more = data.get("next") if isinstance(data, dict) else False
+            if not has_more and new_this_page == 0:
                 break
             page += 1
 
