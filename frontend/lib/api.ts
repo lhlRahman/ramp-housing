@@ -147,6 +147,18 @@ export async function getOutreachDetail(outreachId: string): Promise<OutreachIte
   return resp.json();
 }
 
+export async function sendOutreachSMS(outreachId: string, message: string): Promise<void> {
+  const resp = await authFetch(`${API_BASE}/api/outreach/${encodeURIComponent(outreachId)}/send-sms`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error(data.detail || `Send SMS error: ${resp.status}`);
+  }
+}
+
 // ── Auth ────────────────────────────────────────────────────────
 
 export function getAuthToken(): string | null {

@@ -3,7 +3,8 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { OutreachItem, OUTREACH_STATUS_LABELS, OUTREACH_STATUS_COLORS, SOURCE_LABELS } from "@/lib/types";
-import { getOutreachDashboard, getAuthToken, getMe } from "@/lib/api";
+import { getOutreachDashboard, getAuthToken, getMe, sendOutreachSMS } from "@/lib/api";
+import { toast } from "sonner";
 
 interface OutreachEvent {
   event_id: number;
@@ -322,24 +323,28 @@ export default function DashboardPage() {
                             </p>
                           )}
 
-                          {item.channel === "text" && item.events && item.events.some(e => ["contacted", "sms_reply", "sms_sent", "followup_sent"].includes(e.event_type)) && (
+                          {item.events && item.events.some(e => ["contacted", "sms_reply", "sms_sent", "followup_sent", "followup_sms", "renter_call_summary"].includes(e.event_type)) && (
                             <div>
                               <h4 className="text-[10px] font-semibold text-text-primary uppercase tracking-wider mb-1.5">Messages</h4>
                               <div className="bg-surface-2 border border-border rounded-lg px-3 py-2 space-y-2 max-h-[300px] overflow-y-auto">
                                 {item.events
-                                  .filter(e => ["contacted", "sms_reply", "sms_sent", "followup_sent"].includes(e.event_type))
+                                  .filter(e => ["contacted", "sms_reply", "sms_sent", "followup_sent", "followup_sms", "renter_call_summary"].includes(e.event_type))
                                   .map(ev => {
                                     const d = parseEventDetail(ev.detail);
-                                    const msgBody = d?.body || "";
-                                    const isUs = ev.event_type === "contacted" || ev.event_type === "sms_sent" || ev.event_type === "followup_sent";
+                                    const msgBody = d?.body || (typeof ev.detail === "string" && !ev.detail.startsWith("{") ? ev.detail : "") || "";
+                                    if (!msgBody) return null;
+                                    const isUs = ["contacted", "sms_sent", "followup_sent", "followup_sms"].includes(ev.event_type);
+                                    const isSystem = ev.event_type === "renter_call_summary";
+                                    const label = ev.event_type === "followup_sms" ? "To landlord" : ev.event_type === "renter_call_summary" ? "Call summary" : ev.event_type === "sms_reply" ? "Landlord" : isUs ? "You" : "";
                                     return (
                                       <motion.div
                                         key={ev.event_id}
-                                        className={`flex ${isUs ? "justify-end" : "justify-start"}`}
+                                        className={`flex ${isSystem ? "justify-center" : isUs ? "justify-end" : "justify-start"}`}
                                         initial={{ opacity: 0, y: 4 }}
                                         animate={{ opacity: 1, y: 0 }}
                                       >
-                                        <div className={`max-w-[80%] rounded-lg px-3 py-1.5 ${isUs ? "bg-ramp-lime/15 text-text-primary" : "bg-surface-3 text-text-primary"}`}>
+                                        <div className={`max-w-[80%] rounded-lg px-3 py-1.5 ${isSystem ? "bg-blue-500/10 border border-blue-500/20 text-blue-300" : isUs ? "bg-ramp-lime/15 text-text-primary" : "bg-surface-3 text-text-primary"}`}>
+                                          {label && <p className="text-[9px] font-semibold text-text-muted mb-0.5">{label}</p>}
                                           <p className="text-xs">{msgBody}</p>
                                           <p className="text-[9px] text-text-muted mt-0.5">{formatTime(ev.created_at)}</p>
                                         </div>
@@ -347,7 +352,14 @@ export default function DashboardPage() {
                                     );
                                   })}
                               </div>
+                              {/* Reply input */}
+                              <ReplyInput outreachId={item.outreach_id} onSent={refresh} />
                             </div>
+                          )}
+
+                          {/* Show reply input even if no messages yet */}
+                          {item.events && !item.events.some(e => ["contacted", "sms_reply", "sms_sent", "followup_sent", "followup_sms", "renter_call_summary"].includes(e.event_type)) && (
+                            <ReplyInput outreachId={item.outreach_id} onSent={refresh} />
                           )}
 
                           {item.events && item.events.filter(e => !["call_ended", "contacted", "sms_reply", "sms_sent", "followup_sent", "analysis", "auto_reply_skipped", "auto_reply_capped", "sms_reply_ignored", "auto_ghosted"].includes(e.event_type)).length > 0 && (
@@ -373,6 +385,49 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function ReplyInput({ outreachId, onSent }: { outreachId: string; onSent: () => void }) {
+  const [msg, setMsg] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const handleSend = async () => {
+    const text = msg.trim();
+    if (!text || sending) return;
+    setSending(true);
+    try {
+      await sendOutreachSMS(outreachId, text);
+      setMsg("");
+      toast.success("Message sent to landlord");
+      onSent();
+    } catch (err: any) {
+      toast.error(err.message || "Failed to send");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 mt-2" onClick={e => e.stopPropagation()}>
+      <input
+        type="text"
+        value={msg}
+        onChange={e => setMsg(e.target.value)}
+        onKeyDown={e => { if (e.key === "Enter") handleSend(); }}
+        placeholder="Text the landlord..."
+        className="flex-1 bg-surface-2 border border-border rounded-lg px-3 py-2 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-ramp-lime/50 transition-colors"
+      />
+      <motion.button
+        onClick={handleSend}
+        disabled={!msg.trim() || sending}
+        className="bg-ramp-lime text-surface-0 rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-40 transition-opacity"
+        whileHover={{ scale: 1.03 }}
+        whileTap={{ scale: 0.97 }}
+      >
+        {sending ? "..." : "Send"}
+      </motion.button>
     </div>
   );
 }

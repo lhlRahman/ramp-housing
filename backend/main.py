@@ -1832,3 +1832,24 @@ async def api_update_outreach(request: Request, outreach_id: str, body: Outreach
     if body.status:
         add_outreach_event(outreach_id, "status_change", body.status)
     return {"ok": True}
+
+
+class ManualSMSRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=1000)
+
+
+@app.post("/api/outreach/{outreach_id}/send-sms")
+async def api_outreach_send_sms(request: Request, outreach_id: str, body: ManualSMSRequest) -> dict[str, Any]:
+    """Let the renter manually send a text to the landlord for this outreach."""
+    user = _require_user(request)
+    record = get_outreach(outreach_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Outreach not found")
+    if record.get("renter_phone") != user["phone"]:
+        raise HTTPException(status_code=403, detail="Not your outreach")
+    landlord_phone = record.get("landlord_phone")
+    if not landlord_phone:
+        raise HTTPException(status_code=400, detail="No landlord phone on file for this outreach")
+    await _send_twilio_sms(landlord_phone, body.message)
+    add_outreach_event(outreach_id, "sms_sent", json.dumps({"body": body.message, "manual": True}))
+    return {"ok": True}
