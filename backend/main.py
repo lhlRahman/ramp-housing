@@ -1015,11 +1015,9 @@ class VerifyOTPRequest(BaseModel):
 @app.post("/api/auth/send-otp")
 async def auth_send_otp(body: SendOTPRequest) -> dict[str, Any]:
     phone = _clean_phone(body.phone)
-    # Generate 6-digit code (cryptographically secure)
     import secrets
     code = f"{secrets.randbelow(1000000):06d}"
     db.store_otp(phone, code)
-    # Send via Twilio
     try:
         await _send_twilio_sms(f"+{phone}", f"Your RampHousing code is {code}. Expires in 5 minutes.")
     except Exception as exc:
@@ -1481,21 +1479,17 @@ async def api_start_outreach(request: Request, body: StartOutreachRequest) -> di
                 "outreach_id": oid,
                 "renter_phone": cleaned_phone,
             }
-            # DEMO MODE: override all outgoing numbers to renter's phone
-            DEMO_PHONE = "+16477732191"
-            demo_landlord_phone = DEMO_PHONE  # remove this line after demo
-
             try:
                 if body.channel == "call":
                     client = RetellClient()
                     resp = await client.create_phone_call(RetellOutboundCallRequest(
-                        to_number=demo_landlord_phone,
+                        to_number=item.landlord_phone,
                         retell_llm_dynamic_variables=dyn_vars,
                         metadata={"outreach_id": oid, "renter_phone": cleaned_phone},
                     ))
                 else:
                     sms_parts = await _build_sms_parts(dyn_vars)
-                    sms_results = await _send_sms_parts(demo_landlord_phone, sms_parts)
+                    sms_results = await _send_sms_parts(item.landlord_phone, sms_parts)
                     sms_sid = sms_results[0].get("sid", "") if sms_results else ""
                     update_outreach(oid, status="contacted", conversation_id=sms_sid)
                     for part in sms_parts:
@@ -1857,8 +1851,6 @@ async def api_outreach_send_sms(request: Request, outreach_id: str, body: Manual
     landlord_phone = record.get("landlord_phone")
     if not landlord_phone:
         raise HTTPException(status_code=400, detail="No landlord phone on file for this outreach")
-    # DEMO MODE: override landlord phone
-    landlord_phone = "+16477732191"
     try:
         await _send_twilio_sms(landlord_phone, body.message)
     except Exception as exc:
