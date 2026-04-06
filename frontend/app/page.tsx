@@ -178,11 +178,23 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
     if (polygon) doSearch(polygon, nextFilters);
   }, [applyParsedFilters, doSearch, parsePromptToFilters, polygon]);
 
-  const sorted = useMemo(() => sortListings(listings, sort), [listings, sort]);
-  const sourceCounts = useMemo(() => listings.reduce<Record<string, number>>((acc, l) => {
+  // Client-side filtering: scrapers don't always respect bedroom filters
+  const filtered = useMemo(() => {
+    const beds = filters.bedrooms;
+    const minP = filters.minPrice;
+    const maxP = filters.maxPrice;
+    return listings.filter((l) => {
+      if (beds.length > 0 && beds.length < 4 && !beds.includes(l.bedrooms)) return false;
+      if (minP > 0 && l.price_min < minP) return false;
+      if (maxP < 50000 && l.price_min > maxP) return false;
+      return true;
+    });
+  }, [listings, filters.bedrooms, filters.minPrice, filters.maxPrice]);
+  const sorted = useMemo(() => sortListings(filtered, sort), [filtered, sort]);
+  const sourceCounts = useMemo(() => filtered.reduce<Record<string, number>>((acc, l) => {
     acc[l.source] = (acc[l.source] || 0) + 1;
     return acc;
-  }, {}), [listings]);
+  }, {}), [filtered]);
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-surface-0">
@@ -198,10 +210,10 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 relative">
           <Map
-            listings={listings} selectedId={selectedId} center={mapCenter} zoom={mapZoom}
+            listings={filtered} selectedId={selectedId} center={mapCenter} zoom={mapZoom}
             loading={loading || parsing} initialPolygon={polygon} onPolygonChange={handlePolygonChange}
             onSelectListing={(id) => setSelectedId(prev => prev === id ? null : id)}
-            onOpenDetail={(id) => { const l = listings.find(l => l.id === id); if (l) setDetailListing(l); setSelectedId(id); }}
+            onOpenDetail={(id) => { const l = filtered.find(l => l.id === id); if (l) setDetailListing(l); setSelectedId(id); }}
             onDrawStart={() => setShowEmptyState(false)}
           />
 
