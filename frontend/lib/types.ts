@@ -42,6 +42,7 @@ export interface SearchFilters {
   minPrice: number;
   maxPrice: number;
   bedrooms: number[];
+  bathrooms?: number;
   furnished: boolean;
   noFee: boolean;
   sources: string[];

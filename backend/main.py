@@ -683,12 +683,13 @@ async def parse_filters(body: ParseFiltersRequest) -> dict[str, Any]:
 Return ONLY a valid JSON object. Include only fields that are clearly mentioned:
 - checkIn: "YYYY-MM-DD"
 - checkOut: "YYYY-MM-DD"
-- minPrice: number (monthly rent)
+- minPrice: number (monthly rent). "under 3k" → maxPrice: 3000. "above 2k" → minPrice: 2000.
 - maxPrice: number (monthly rent)
 - bedrooms: array of ints (0=studio, 1, 2, 3) — include all that match, e.g. "1 or 2 BR" → [1,2]
+- bathrooms: number (e.g. "2 bath" → 2)
 - furnished: true/false
 - noFee: true/false
-- summary: short human-readable label, e.g. "Furnished 1BR · $2–3k · Jun–Aug"
+- summary: short human-readable label, e.g. "Furnished 1BR/1BA · $2–3k · Jun–Aug"
 
 Today is {today}. Interpret relative dates (e.g. "this summer", "next month") accordingly."""
 

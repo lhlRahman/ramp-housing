@@ -178,18 +178,20 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
     if (polygon) doSearch(polygon, nextFilters);
   }, [applyParsedFilters, doSearch, parsePromptToFilters, polygon]);
 
-  // Client-side filtering: scrapers don't always respect bedroom filters
+  // Client-side filtering: scrapers don't always respect filters
   const filtered = useMemo(() => {
     const beds = filters.bedrooms;
+    const baths = filters.bathrooms;
     const minP = filters.minPrice;
     const maxP = filters.maxPrice;
     return listings.filter((l) => {
       if (beds.length > 0 && beds.length < 4 && !beds.includes(l.bedrooms)) return false;
+      if (baths && baths > 0 && l.bathrooms < baths) return false;
       if (minP > 0 && l.price_min < minP) return false;
       if (maxP < 50000 && l.price_min > maxP) return false;
       return true;
     });
-  }, [listings, filters.bedrooms, filters.minPrice, filters.maxPrice]);
+  }, [listings, filters.bedrooms, filters.bathrooms, filters.minPrice, filters.maxPrice]);
   const sorted = useMemo(() => sortListings(filtered, sort), [filtered, sort]);
   const sourceCounts = useMemo(() => filtered.reduce<Record<string, number>>((acc, l) => {
     acc[l.source] = (acc[l.source] || 0) + 1;
