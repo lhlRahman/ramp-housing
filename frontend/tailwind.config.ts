@@ -12,7 +12,6 @@ const config: Config = {
         sans: ["var(--font-sans)", "system-ui", "-apple-system", "sans-serif"],
       },
       colors: {
-        // shadcn CSS variable colors
         background: "var(--background)",
         foreground: "var(--foreground)",
         card: { DEFAULT: "var(--card)", foreground: "var(--card-foreground)" },
@@ -24,28 +23,28 @@ const config: Config = {
         destructive: { DEFAULT: "var(--destructive)", foreground: "var(--destructive-foreground, #fff)" },
         input: "var(--input)",
         ring: "var(--ring)",
-        // App colors
+        // App colors — light theme
         ramp: {
-          lime: "#EBF123",
-          "lime-hover": "#D4DA1F",
-          "lime-dim": "rgba(235, 241, 35, 0.08)",
+          lime: "#C8D400",
+          "lime-hover": "#b3bc00",
+          "lime-dim": "rgba(200, 212, 0, 0.10)",
         },
         surface: {
-          0: "#0A0A0A",
-          1: "#111111",
-          2: "#1A1A1A",
-          3: "#222222",
-          4: "#2A2A2A",
+          0: "var(--surface-0)",
+          1: "var(--surface-1)",
+          2: "var(--surface-2)",
+          3: "var(--surface-3)",
+          4: "var(--surface-4)",
         },
         border: {
-          DEFAULT: "#1F1F1F",
-          light: "#2A2A2A",
-          hover: "#3A3A3A",
+          DEFAULT: "var(--border-default)",
+          light: "var(--border-light)",
+          hover: "var(--border-hover)",
         },
         text: {
-          primary: "#F5F5F5",
-          secondary: "rgba(245, 245, 245, 0.6)",
-          muted: "rgba(245, 245, 245, 0.35)",
+          primary: "var(--text-primary)",
+          secondary: "var(--text-secondary)",
+          muted: "var(--text-muted)",
         },
       },
       borderRadius: {
@@ -54,11 +53,11 @@ const config: Config = {
         sm: "calc(var(--radius) - 4px)",
       },
       boxShadow: {
-        glow: "0 0 20px rgba(235, 241, 35, 0.08)",
-        "glow-lg": "0 0 40px rgba(235, 241, 35, 0.12)",
-        card: "0 1px 3px rgba(0,0,0,0.3)",
-        "card-hover": "0 8px 24px rgba(0,0,0,0.4)",
-        drawer: "-12px 0 40px rgba(0,0,0,0.5)",
+        glow: "0 0 20px rgba(200, 212, 0, 0.12)",
+        "glow-lg": "0 0 40px rgba(200, 212, 0, 0.18)",
+        card: "0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)",
+        "card-hover": "0 8px 24px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.06)",
+        drawer: "-12px 0 40px rgba(0,0,0,0.08)",
       },
       animation: {
         "slide-in": "slide-in 0.25s cubic-bezier(0.16, 1, 0.3, 1)",

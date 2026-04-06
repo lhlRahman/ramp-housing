@@ -13,6 +13,7 @@ import { getRenterProfile, getAuthToken, getMe, clearAuth, logout } from "@/lib/
 import { useSearchFilters } from "@/hooks/useSearchFilters";
 import { usePromptFilters } from "@/hooks/usePromptFilters";
 import { useHousingSearch } from "@/hooks/useHousingSearch";
+import { useTheme } from "@/hooks/useTheme";
 
 const Map = dynamic(() => import("@/components/Map"), { ssr: false });
 
@@ -37,6 +38,8 @@ export default function Home() {
     if (!token) { setAuthChecked(true); return; }
     const stored = localStorage.getItem("auth_user");
     if (stored) { try { setAuthUser(JSON.parse(stored)); } catch { /* ignore */ } }
+    // Guest mode — skip server validation
+    if (token === "guest") { setAuthChecked(true); return; }
     getMe().then((data) => {
       const user: AuthUser = { user_id: data.user_id, phone: data.phone, name: data.name };
       setAuthUser(user);
@@ -76,6 +79,7 @@ function saveSession(key: string, value: unknown) {
 }
 
 function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout: () => void }) {
+  const { theme, toggleTheme } = useTheme();
   const router = useRouter();
   const [polygon, setPolygonState] = useState<[number, number][] | null>(() => loadSession("search_polygon", null));
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -207,6 +211,7 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
         loading={loading || parsing} availableSources={availableSources}
         detectedLocation={detectedLocation} noSourcesMessage={noSourcesMessage}
         parsedSummary={parsedSummary}
+        theme={theme} onToggleTheme={toggleTheme}
       />
 
       <div className="flex flex-1 overflow-hidden">

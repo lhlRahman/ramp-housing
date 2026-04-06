@@ -17,12 +17,15 @@ interface Props {
   detectedLocation: string | null;
   noSourcesMessage: string | null;
   parsedSummary: string | null;
+  theme?: "light" | "dark";
+  onToggleTheme?: () => void;
 }
 
 export default function FiltersBar({
   filters, onChange, onSourcesChange, onSearch, onPromptSearch,
   prompt, onPromptChange,
   hasPolygon, loading, availableSources, detectedLocation, parsedSummary,
+  theme = "light", onToggleTheme,
 }: Props) {
   const [showSources, setShowSources] = useState(false);
   const sourcesMenuRef = useRef<HTMLDivElement | null>(null);
@@ -126,7 +129,7 @@ export default function FiltersBar({
             viewBox="0 0 24 24"
             stroke="currentColor"
             strokeWidth={2}
-            animate={{ color: inputFocused ? "#EBF123" : "rgba(245, 245, 245, 0.35)" }}
+            animate={{ color: inputFocused ? "#C8D400" : "#9CA3AF" }}
             transition={{ duration: 0.15 }}
           >
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
@@ -233,6 +236,30 @@ export default function FiltersBar({
             </>
           ) : hasPolygon ? "Update" : "Draw area first"}
         </motion.button>
+
+        {/* Theme toggle */}
+        {onToggleTheme && (
+          <motion.button
+            onClick={onToggleTheme}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-text-secondary hover:text-text-primary hover:bg-surface-2 transition-colors shrink-0"
+            whileHover={{ scale: 1.08 }}
+            whileTap={{ scale: 0.93 }}
+            title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
+          >
+            {theme === "light" ? (
+              /* Moon icon */
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 12.79A9 9 0 1111.21 3a7 7 0 009.79 9.79z" />
+              </svg>
+            ) : (
+              /* Sun icon */
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+                <circle cx="12" cy="12" r="4" />
+                <path strokeLinecap="round" d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+              </svg>
+            )}
+          </motion.button>
+        )}
       </div>
     </div>
   );

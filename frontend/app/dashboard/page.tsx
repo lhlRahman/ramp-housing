@@ -424,7 +424,7 @@ function ReplyInput({ outreachId, onSent }: { outreachId: string; onSent: () => 
       <motion.button
         onClick={handleSend}
         disabled={!msg.trim() || sending}
-        className="bg-ramp-lime text-surface-0 rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-40 transition-opacity"
+        className="bg-ramp-lime text-text-primary rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-40 transition-opacity"
         whileHover={{ scale: 1.03 }}
         whileTap={{ scale: 0.97 }}
       >
