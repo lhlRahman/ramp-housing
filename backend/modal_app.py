@@ -46,7 +46,7 @@ def api():
 
     # Import the FastAPI app (from /app which is our backend dir)
     import sys
-    sys.path.insert(0, "/app")
+    sys.path.insert(0, "/app/backend")
 
     from main import app as fastapi_app
 
