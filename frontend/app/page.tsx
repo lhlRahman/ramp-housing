@@ -329,7 +329,7 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
                 </span>
                 <span className="w-px h-3 bg-border" />
                 <span className="text-text-secondary">
-                  <span className="font-semibold text-ramp-lime">{stats.returned}</span> in area
+                  <span className="font-semibold text-ramp-lime">{filtered.length}</span> in area
                 </span>
               </motion.div>
             )}
@@ -337,7 +337,7 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
 
           {/* Empty state */}
           <AnimatePresence>
-            {showEmptyState && !polygon && !loading && listings.length === 0 && !noSourcesMessage && (
+            {showEmptyState && !polygon && !loading && filtered.length === 0 && !noSourcesMessage && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -380,15 +380,15 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
           <div className="px-5 py-3 border-b border-border flex items-center justify-between">
             <div>
               <h2 className="text-sm font-semibold text-text-primary tracking-tight">
-                {listings.length > 0 ? (
+                {filtered.length > 0 ? (
                   <>
                     <motion.span
-                      key={listings.length}
+                      key={filtered.length}
                       initial={{ opacity: 0, y: -8 }}
                       animate={{ opacity: 1, y: 0 }}
                       className="inline-block"
                     >
-                      {listings.length}
+                      {filtered.length}
                     </motion.span>
                     {" "}
                     <span className="text-text-muted font-normal">listings</span>
@@ -439,7 +439,7 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
                 </svg>
               </motion.button>
-              {listings.length > 1 && (
+              {filtered.length > 1 && (
                 <select value={sort} onChange={(e) => setSort(e.target.value as SortOption)} className="text-xs bg-surface-2 border border-border text-text-secondary rounded-lg px-2 py-1 cursor-pointer focus:outline-none focus:border-ramp-lime/30">
                   <option value="price_asc">Price up</option>
                   <option value="price_desc">Price down</option>
@@ -451,7 +451,7 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
           </div>
 
           <div className="flex-1 overflow-y-auto">
-            {listings.length === 0 && !loading ? (
+            {filtered.length === 0 && !loading ? (
               <div className="flex flex-col items-center justify-center h-full text-center px-8">
                 <p className="text-sm text-text-muted">{polygon ? (noSourcesMessage || "No listings in this area") : "Draw an area to search"}</p>
               </div>
