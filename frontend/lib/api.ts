@@ -75,8 +75,11 @@ export function searchListingsWS(
     }
   };
 
-  ws.onerror = () => { done = true; callbacks.onError("WebSocket connection failed"); };
-  ws.onclose = () => { if (!done) callbacks.onError("Connection closed unexpectedly"); };
+  ws.onerror = () => { if (!done) { done = true; callbacks.onError("WebSocket connection failed"); } };
+  ws.onclose = (e) => {
+    // Modal's WS proxy sends broken close frames (code 1006/1015) on container idle — ignore if data already came through
+    if (!done && e.code !== 1006 && e.code !== 1015) callbacks.onError("Connection closed unexpectedly");
+  };
 
   return () => ws.close();
 }
