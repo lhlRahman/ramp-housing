@@ -24,7 +24,7 @@ interface HoverPreview {
   y: number;
 }
 
-const TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+const TILES = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
 
 export default function Map({ listings, selectedId, center, zoom, loading, initialPolygon, onPolygonChange, onSelectListing, onOpenDetail, onDrawStart }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -124,7 +124,7 @@ export default function Map({ listings, selectedId, center, zoom, loading, initi
     mapRef.current = map;
 
     L.tileLayer(TILES, {
-      attribution: "© CartoDB © OpenStreetMap",
+      attribution: "© OpenStreetMap contributors",
       maxZoom: 19,
     }).addTo(map);
 
