@@ -497,6 +497,7 @@ async def ws_search(websocket: WebSocket):
                     await websocket.send_json({"type": "source_status", "source": src_name, "status": "done", "count": len(result), "cached": False})
 
         await websocket.send_json({"type": "done", "stats": total_stats})
+        await websocket.close(code=1000)
 
     except WebSocketDisconnect:
         log.info("WS client disconnected — in-flight scrapes will continue caching in background")
