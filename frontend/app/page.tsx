@@ -218,7 +218,7 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
         <div className="flex-1 relative">
           <Map
             listings={filtered} selectedId={selectedId} center={mapCenter} zoom={mapZoom}
-            loading={loading || parsing} initialPolygon={polygon} theme={theme} onPolygonChange={handlePolygonChange}
+            loading={loading || parsing} initialPolygon={polygon} onPolygonChange={handlePolygonChange}
             onSelectListing={(id) => setSelectedId(prev => prev === id ? null : id)}
             onOpenDetail={(id) => { const l = filtered.find(l => l.id === id); if (l) setDetailListing(l); setSelectedId(id); }}
             onDrawStart={() => setShowEmptyState(false)}

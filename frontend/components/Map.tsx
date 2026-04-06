@@ -12,7 +12,6 @@ interface Props {
   zoom: number;
   loading?: boolean;
   initialPolygon?: [number, number][] | null;
-  theme?: "light" | "dark";
   onPolygonChange: (polygon: [number, number][] | null) => void;
   onSelectListing: (id: string) => void;
   onOpenDetail: (id: string) => void;
@@ -25,10 +24,9 @@ interface HoverPreview {
   y: number;
 }
 
-const LIGHT_TILES = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
-const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+const TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 
-export default function Map({ listings, selectedId, center, zoom, loading, initialPolygon, theme = "dark", onPolygonChange, onSelectListing, onOpenDetail, onDrawStart }: Props) {
+export default function Map({ listings, selectedId, center, zoom, loading, initialPolygon, onPolygonChange, onSelectListing, onOpenDetail, onDrawStart }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const markersRef = useRef<globalThis.Map<string, Marker>>(new globalThis.Map());
@@ -43,23 +41,10 @@ export default function Map({ listings, selectedId, center, zoom, loading, initi
   const hoveredListingRef = useRef<Listing | null>(null);
 
   const initialPolygonRef = useRef(initialPolygon);
-  const tileLayerRef = useRef<any>(null);
 
   // Keep ref current so initMap never needs onPolygonChange as a dependency
   useEffect(() => { onPolygonChangeRef.current = onPolygonChange; }, [onPolygonChange]);
 
-  // Swap tile layer when theme changes
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !tileLayerRef.current) return;
-    map.removeLayer(tileLayerRef.current);
-    import("leaflet").then((L) => {
-      tileLayerRef.current = L.default.tileLayer(theme === "dark" ? DARK_TILES : LIGHT_TILES, {
-        attribution: theme === "dark" ? "© CartoDB © OpenStreetMap" : "© OpenStreetMap contributors",
-        maxZoom: 19,
-      }).addTo(map);
-    });
-  }, [theme]);
 
   // Track mouse position for hover preview — attached to container, not markers
   useEffect(() => {
@@ -138,8 +123,8 @@ export default function Map({ listings, selectedId, center, zoom, loading, initi
     }).setView(center, zoom);
     mapRef.current = map;
 
-    tileLayerRef.current = L.tileLayer(theme === "dark" ? DARK_TILES : LIGHT_TILES, {
-      attribution: theme === "dark" ? "© CartoDB © OpenStreetMap" : "© OpenStreetMap contributors",
+    L.tileLayer(TILES, {
+      attribution: "© CartoDB © OpenStreetMap",
       maxZoom: 19,
     }).addTo(map);
 
