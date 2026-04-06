@@ -348,7 +348,7 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[999] pointer-events-none"
+                className="absolute inset-0 flex items-center justify-center z-[999] pointer-events-none"
               >
                 <div className="bg-surface-0 rounded-2xl px-10 py-8 text-center max-w-sm shadow-card-hover border border-border relative pointer-events-none">
                   <button onClick={() => setShowEmptyState(false)} className="absolute top-2.5 right-2.5 w-6 h-6 rounded-full bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text-primary flex items-center justify-center transition-colors pointer-events-auto">
