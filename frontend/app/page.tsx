@@ -218,7 +218,7 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
         <div className="flex-1 relative">
           <Map
             listings={filtered} selectedId={selectedId} center={mapCenter} zoom={mapZoom}
-            loading={loading || parsing} initialPolygon={polygon} onPolygonChange={handlePolygonChange}
+            loading={loading || parsing} initialPolygon={polygon} theme={theme} onPolygonChange={handlePolygonChange}
             onSelectListing={(id) => setSelectedId(prev => prev === id ? null : id)}
             onOpenDetail={(id) => { const l = filtered.find(l => l.id === id); if (l) setDetailListing(l); setSelectedId(id); }}
             onDrawStart={() => setShowEmptyState(false)}
@@ -348,9 +348,9 @@ function AuthenticatedApp({ authUser, onLogout }: { authUser: AuthUser; onLogout
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.95 }}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[999] pointer-events-none"
+                className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[999] pointer-events-none"
               >
-                <div className="glass-strong rounded-2xl px-10 py-8 text-center max-w-sm shadow-card-hover relative pointer-events-none">
+                <div className="bg-surface-0 rounded-2xl px-10 py-8 text-center max-w-sm shadow-card-hover border border-border relative pointer-events-none">
                   <button onClick={() => setShowEmptyState(false)} className="absolute top-2.5 right-2.5 w-6 h-6 rounded-full bg-surface-3 hover:bg-surface-4 text-text-muted hover:text-text-primary flex items-center justify-center transition-colors pointer-events-auto">
                     <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                   </button>

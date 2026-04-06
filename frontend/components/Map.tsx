@@ -12,6 +12,7 @@ interface Props {
   zoom: number;
   loading?: boolean;
   initialPolygon?: [number, number][] | null;
+  theme?: "light" | "dark";
   onPolygonChange: (polygon: [number, number][] | null) => void;
   onSelectListing: (id: string) => void;
   onOpenDetail: (id: string) => void;
@@ -24,7 +25,10 @@ interface HoverPreview {
   y: number;
 }
 
-export default function Map({ listings, selectedId, center, zoom, loading, initialPolygon, onPolygonChange, onSelectListing, onOpenDetail, onDrawStart }: Props) {
+const LIGHT_TILES = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+const DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+
+export default function Map({ listings, selectedId, center, zoom, loading, initialPolygon, theme = "dark", onPolygonChange, onSelectListing, onOpenDetail, onDrawStart }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const markersRef = useRef<globalThis.Map<string, Marker>>(new globalThis.Map());
@@ -39,9 +43,23 @@ export default function Map({ listings, selectedId, center, zoom, loading, initi
   const hoveredListingRef = useRef<Listing | null>(null);
 
   const initialPolygonRef = useRef(initialPolygon);
+  const tileLayerRef = useRef<any>(null);
 
   // Keep ref current so initMap never needs onPolygonChange as a dependency
   useEffect(() => { onPolygonChangeRef.current = onPolygonChange; }, [onPolygonChange]);
+
+  // Swap tile layer when theme changes
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !tileLayerRef.current) return;
+    map.removeLayer(tileLayerRef.current);
+    import("leaflet").then((L) => {
+      tileLayerRef.current = L.default.tileLayer(theme === "dark" ? DARK_TILES : LIGHT_TILES, {
+        attribution: theme === "dark" ? "© CartoDB © OpenStreetMap" : "© OpenStreetMap contributors",
+        maxZoom: 19,
+      }).addTo(map);
+    });
+  }, [theme]);
 
   // Track mouse position for hover preview — attached to container, not markers
   useEffect(() => {
@@ -120,8 +138,8 @@ export default function Map({ listings, selectedId, center, zoom, loading, initi
     }).setView(center, zoom);
     mapRef.current = map;
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "© OpenStreetMap contributors",
+    tileLayerRef.current = L.tileLayer(theme === "dark" ? DARK_TILES : LIGHT_TILES, {
+      attribution: theme === "dark" ? "© CartoDB © OpenStreetMap" : "© OpenStreetMap contributors",
       maxZoom: 19,
     }).addTo(map);
 
@@ -355,7 +373,7 @@ export default function Map({ listings, selectedId, center, zoom, loading, initi
         {isDrawing && !hasPolygon ? (
           <button
             onClick={cancelDraw}
-            className="bg-surface-2 border-2 border-amber-500/40 text-amber-300 hover:bg-surface-3 rounded-lg px-3 py-2 text-xs font-medium transition-all flex items-center gap-2 shadow-card"
+            className="bg-surface-0 border-2 border-amber-500/40 text-amber-600 dark:text-amber-300 hover:bg-surface-1 rounded-lg px-3 py-2 text-xs font-medium transition-all flex items-center gap-2 shadow-card"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -365,7 +383,7 @@ export default function Map({ listings, selectedId, center, zoom, loading, initi
         ) : hasPolygon ? (
           <button
             onClick={clearArea}
-            className="bg-surface-2 border-2 border-ramp-lime/50 text-ramp-lime hover:bg-surface-3 rounded-lg px-3 py-2 text-xs font-medium transition-all flex items-center gap-2 shadow-card"
+            className="bg-surface-0 border-2 border-ramp-lime/50 text-ramp-lime hover:bg-surface-1 rounded-lg px-3 py-2 text-xs font-medium transition-all flex items-center gap-2 shadow-card"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -376,7 +394,7 @@ export default function Map({ listings, selectedId, center, zoom, loading, initi
           <div ref={menuRef} className="relative">
             <button
               onClick={() => setShowMenu(!showMenu)}
-              className="bg-surface-2 border border-border hover:border-border-hover hover:bg-surface-3 text-text-primary rounded-lg px-3 py-2 text-xs font-medium transition-all flex items-center gap-2 shadow-card"
+              className="bg-surface-0 border border-border hover:border-border-hover hover:bg-surface-1 text-text-primary rounded-lg px-3 py-2 text-xs font-medium transition-all flex items-center gap-2 shadow-card"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z" />
@@ -388,7 +406,7 @@ export default function Map({ listings, selectedId, center, zoom, loading, initi
             </button>
 
             {showMenu && (
-              <div className="absolute top-full left-0 mt-1 bg-surface-2 border border-border rounded-xl shadow-card-hover p-1.5 z-[100] w-40">
+              <div className="absolute top-full left-0 mt-1 bg-surface-0 border border-border rounded-xl shadow-card-hover p-1.5 z-[100] w-40">
                 <button
                   onClick={() => startDraw("Rectangle")}
                   className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-text-primary hover:bg-surface-3 transition-colors"
@@ -455,7 +473,7 @@ export default function Map({ listings, selectedId, center, zoom, loading, initi
 
       {isDrawing && !hasPolygon && (
         <div className="absolute top-16 left-14 z-[1000] pointer-events-none">
-          <div className="bg-surface-2/95 backdrop-blur border border-border rounded-lg px-3 py-2 text-[11px] text-text-secondary shadow-card">
+          <div className="bg-surface-0 border border-border rounded-lg px-3 py-2 text-[11px] text-text-secondary shadow-card">
             Click to place points. Press Esc to cancel.
           </div>
         </div>
