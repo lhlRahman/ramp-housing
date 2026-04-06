@@ -16,6 +16,9 @@ node_modules/
 *.swo
 
 # Environment
+.env
+.env.*
+!.env.example
 .env.local
 
 # Database
